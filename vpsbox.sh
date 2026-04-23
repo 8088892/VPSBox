@@ -3,7 +3,7 @@
 # =====================================================================
 # 项目名称: VPS Box (全能服务器优化与多节点部署工具箱)
 # 核心特性: 全局防冲突部署、智能复用证书、双内核自适应、系统管家
-# 版本: v1.8.2 (引入智能依赖检测 + 保持原版 UI 描述与自适应排版)
+# 版本: v2.0.1 (引入智能依赖检测 + 保持原版 UI 描述与自适应排版)
 # =====================================================================
 
 RED='\033[0;31m'
@@ -136,16 +136,41 @@ change_root_password() {
     if ! confirm_action "修改 root 密码"; then pause_for_enter; return; fi
     
     echo -e "\n${YELLOW}提示：输入密码时屏幕不会显示字符，属于正常安全机制。${NC}\n"
-    passwd root
-    echo -e "\n${GREEN}✅ 密码修改操作结束（若无报错提示则已生效）。${NC}"
+    
+    # 捕获错误并提供重试选项
+    while true; do
+        passwd root
+        if [ $? -eq 0 ]; then
+            echo -e "\n${GREEN}✅ 密码已成功修改！${NC}"
+            break
+        else
+            echo -e "\n${RED}[错误] 密码修改失败！(可能是两次输入不一致，或者密码为空/仅包含空格)${NC}"
+            read -r -p "▶ 是否继续尝试修改密码？(y/n, 默认 y): " retry_pwd
+            retry_pwd="${retry_pwd// /}"
+            if [[ "$retry_pwd" =~ ^[nN]$ ]]; then
+                echo -e "\n${YELLOW}已退出密码修改。${NC}"
+                break
+            fi
+            echo -e "\n${CYAN}>>> 请重新设置密码：${NC}"
+        fi
+    done
     pause_for_enter
 }
 
 setup_ssh_key() {
     clear; print_divider; echo -e "       🛡️ 配置 SSH 密钥免密登录    "; print_divider
-    read -r -p "▶ 请粘贴您的公钥 (通常以 ssh-rsa 开头, 输入 0 取消): " pub_key
-    pub_key="${pub_key// /}" # iPad空格剔除
-    if [ "$pub_key" == "0" ] || [ -z "$pub_key" ]; then return; fi
+    
+    # 空输入防呆循环
+    while true; do
+        read -r -p "▶ 请粘贴您的公钥 (通常以 ssh-rsa 开头, 输入 0 取消): " pub_key
+        # 注意：这里不能剔除空格，否则会导致带有空格的 SSH 格式公钥直接作废
+        if [ "$pub_key" == "0" ]; then return; fi
+        if [ -z "$pub_key" ]; then 
+            echo -e "${RED}[错误] 密钥内容不能为空，请重新输入！${NC}"
+            continue
+        fi
+        break
+    done
     
     if ! confirm_action "导入此 SSH 公钥"; then pause_for_enter; return; fi
 
@@ -185,9 +210,22 @@ change_ssh_port() {
 change_hostname() {
     clear; print_divider; echo -e "       🏷️ 修改系统主机名 (Hostname)    "; print_divider
     echo -e "当前主机名: ${YELLOW}$(hostname)${NC}"
-    read -r -p "▶ 请输入新的主机名 (仅限字母、数字和连字符, 输入 0 取消): " new_hostname
-    new_hostname="${new_hostname// /}" # iPad空格剔除
-    if [ "$new_hostname" == "0" ] || [ -z "$new_hostname" ]; then return; fi
+    
+    # 防呆校验
+    while true; do
+        read -r -p "▶ 请输入新的主机名 (仅限字母、数字和连字符, 输入 0 取消): " new_hostname
+        new_hostname="${new_hostname// /}" # iPad空格剔除
+        if [ "$new_hostname" == "0" ]; then return; fi
+        if [ -z "$new_hostname" ]; then
+            echo -e "${RED}[错误] 主机名不能为空，请重新输入！${NC}"
+            continue
+        fi
+        if ! [[ "$new_hostname" =~ ^[a-zA-Z0-9-]+$ ]]; then
+            echo -e "${RED}[错误] 格式不正确！仅限输入字母、数字和连字符(-)。${NC}"
+            continue
+        fi
+        break
+    done
     
     if ! confirm_action "将主机名修改为 $new_hostname"; then pause_for_enter; return; fi
 
@@ -213,45 +251,55 @@ manage_swap() {
     local swap_size=$(free -m | grep -i swap | awk '{print $2}')
     echo -e "当前 Swap 大小: ${GREEN}${swap_size} MB${NC}\n"
     
-    echo -e "  ${GREEN}1.${NC} 创建/修改 Swap (推荐 1024MB 或 2048MB)"
-    echo -e "  ${GREEN}2.${NC} 关闭并删除现有 Swap"
-    echo -e "  ${GREEN}0.${NC} 取消返回"
-    read -r -p "▶ 请选择操作 [0-2]: " swap_opt
-    swap_opt="${swap_opt// /}" # iPad空格剔除
-    
-    case $swap_opt in
-        1)
-            while true; do
-                read -r -p "▶ 请输入 Swap 大小 (单位 MB，例如 1024): " input_size
-                input_size="${input_size// /}" # iPad空格剔除
-                if [[ "$input_size" =~ ^[0-9]+$ ]]; then
-                    break
-                else
-                    echo -e "${RED}[错误] 输入无效，请输入纯数字。${NC}"
+    # 加入防呆循环，输入错误不允许执行
+    while true; do
+        echo -e "  ${GREEN}1.${NC} 创建/修改 Swap (推荐 1024MB 或 2048MB)"
+        echo -e "  ${GREEN}2.${NC} 关闭并删除现有 Swap"
+        echo -e "  ${GREEN}0.${NC} 取消返回"
+        read -r -p "▶ 请选择操作 [0-2]: " swap_opt
+        swap_opt="${swap_opt// /}" # iPad空格剔除
+        
+        case $swap_opt in
+            1)
+                while true; do
+                    read -r -p "▶ 请输入 Swap 大小 (单位 MB，例如 1024): " input_size
+                    input_size="${input_size// /}" # iPad空格剔除
+                    if [[ "$input_size" =~ ^[0-9]+$ ]]; then
+                        break
+                    else
+                        echo -e "${RED}[错误] 输入无效，请输入纯数字。${NC}"
+                    fi
+                done
+                if ! confirm_action "设置 ${input_size}MB 的 Swap"; then return; fi
+                echo -e "\n${CYAN}>>> 正在配置 ${input_size}MB Swap，请稍候...${NC}"
+                swapoff -a
+                rm -f /swapfile
+                dd if=/dev/zero of=/swapfile bs=1M count=$input_size status=progress
+                chmod 600 /swapfile
+                mkswap /swapfile
+                swapon /swapfile
+                if ! grep -q "/swapfile" /etc/fstab; then
+                    echo "/swapfile none swap sw 0 0" >> /etc/fstab
                 fi
-            done
-            if ! confirm_action "设置 ${input_size}MB 的 Swap"; then pause_for_enter; return; fi
-            echo -e "\n${CYAN}>>> 正在配置 ${input_size}MB Swap，请稍候...${NC}"
-            swapoff -a
-            rm -f /swapfile
-            dd if=/dev/zero of=/swapfile bs=1M count=$input_size status=progress
-            chmod 600 /swapfile
-            mkswap /swapfile
-            swapon /swapfile
-            if ! grep -q "/swapfile" /etc/fstab; then
-                echo "/swapfile none swap sw 0 0" >> /etc/fstab
-            fi
-            echo -e "${GREEN}✅ Swap 设置成功！${NC}"
-            ;;
-        2)
-            if ! confirm_action "关闭并删除现有 Swap"; then pause_for_enter; return; fi
-            swapoff -a
-            rm -f /swapfile
-            sed -i '/\/swapfile/d' /etc/fstab
-            echo -e "\n${GREEN}✅ Swap 已彻底关闭并清理！${NC}"
-            ;;
-    esac
-    pause_for_enter
+                echo -e "${GREEN}✅ Swap 设置成功！${NC}"
+                return
+                ;;
+            2)
+                if ! confirm_action "关闭并删除现有 Swap"; then return; fi
+                swapoff -a
+                rm -f /swapfile
+                sed -i '/\/swapfile/d' /etc/fstab
+                echo -e "\n${GREEN}✅ Swap 已彻底关闭并清理！${NC}"
+                return
+                ;;
+            0)
+                return
+                ;;
+            *)
+                echo -e "\n${RED}[错误] 输入无效！请输入 0、1 或 2 进行选择。${NC}\n"
+                ;;
+        esac
+    done
 }
 
 optimize_dns() {
@@ -373,54 +421,77 @@ backup_config_silently() {
 }
 
 manage_backup() {
-    clear; print_divider; echo -e "       📦 网络调优参数备份与还原管理    "; print_divider
-    echo -e "  ${GREEN}1.${NC} 立即备份当前参数"
-    echo -e "  ${GREEN}2.${NC} 还原历史备份"
-    echo -e "  ${GREEN}3.${NC} 删除历史备份"
-    echo -e "  ${GREEN}0.${NC} 返回主菜单"
-    echo ""
-    read -r -p "▶ 请选择操作 [0-3]: " b_opt
-    b_opt="${b_opt// /}" # iPad空格剔除
-    case $b_opt in
-        1)
-            if ! confirm_action "备份当前网络参数"; then return; fi
-            local ts=$(date +"%Y%m%d_%H%M%S")
-            sysctl -a --pattern net.ipv4.tcp | grep -E "rmem|wmem|congestion|sack" > "${BACKUP_DIR}/backup_${ts}.conf" 2>/dev/null
-            echo -e "\n${GREEN}✅ TCP 参数备份成功！${NC}"
-            pause_for_enter
-            ;;
-        2)
-            shopt -s nullglob; local backups=("${BACKUP_DIR}"/backup_*.conf); shopt -u nullglob
-            if [ ${#backups[@]} -eq 0 ]; then echo -e "\n${RED}无备份记录。${NC}"; pause_for_enter; return; fi
-            echo -e "\n${CYAN}请选择要恢复的时间点：${NC}"
-            for i in "${!backups[@]}"; do echo -e "  ${GREEN}$((i+1)).${NC} 备份日期: $(stat -c "%y" "${backups[$i]}" | cut -d'.' -f1)"; done
-            read -r -p "▶ 请输入编号 (0取消): " res_opt
-            res_opt="${res_opt// /}" # iPad空格剔除
-            if [[ "$res_opt" =~ ^[0-9]+$ ]] && [ "$res_opt" -ge 1 ] && [ "$res_opt" -le "${#backups[@]}" ]; then
-                if ! confirm_action "覆盖当前配置并还原至此备份"; then return; fi
-                sysctl -p "${backups[$((res_opt-1))]}" > /dev/null 2>&1
-                rm -f "$CUSTOM_CONF"; echo -e "\n${GREEN}✅ 参数已成功还原！${NC}"
-            fi
-            pause_for_enter
-            ;;
-        3)
-            shopt -s nullglob; local backups=("${BACKUP_DIR}"/backup_*.conf); shopt -u nullglob
-            if [ ${#backups[@]} -eq 0 ]; then echo -e "\n${YELLOW}备份目录为空。${NC}"; pause_for_enter; return; fi
-            echo -e "\n${CYAN}请选择要删除的备份：${NC}"
-            for i in "${!backups[@]}"; do echo -e "  ${GREEN}$((i+1)).${NC} 备份日期: $(stat -c "%y" "${backups[$i]}" | cut -d'.' -f1)"; done
-            echo -e "  ${RED}99.${NC} 清空所有"
-            read -r -p "▶ 请输入编号 (0取消): " del_opt
-            del_opt="${del_opt// /}" # iPad空格剔除
-            if [[ "$del_opt" =~ ^[0-9]+$ ]] && [ "$del_opt" -ge 1 ] && [ "$del_opt" -le "${#backups[@]}" ]; then
-                if ! confirm_action "永久删除此备份"; then return; fi
-                rm -f "${backups[$((del_opt-1))]}"; echo -e "\n${GREEN}✅ 记录已删除。${NC}"
-            elif [ "$del_opt" -eq 99 ]; then
-                if ! confirm_action "永久清空所有备份"; then return; fi
-                rm -f "${BACKUP_DIR}"/backup_*.conf; echo -e "\n${GREEN}✅ 已清空所有备份。${NC}"
-            fi
-            pause_for_enter
-            ;;
-    esac
+    while true; do
+        clear; print_divider; echo -e "       📦 网络调优参数备份与还原管理    "; print_divider
+        echo -e "  ${GREEN}1.${NC} 立即备份当前参数"
+        echo -e "  ${GREEN}2.${NC} 还原历史备份"
+        echo -e "  ${GREEN}3.${NC} 删除历史备份"
+        echo -e "  ${GREEN}0.${NC} 返回主菜单"
+        echo ""
+        read -r -p "▶ 请选择操作 [0-3]: " b_opt
+        b_opt="${b_opt// /}" # iPad空格剔除
+        
+        case $b_opt in
+            1)
+                if ! confirm_action "备份当前网络参数"; then continue; fi
+                local ts=$(date +"%Y%m%d_%H%M%S")
+                sysctl -a --pattern net.ipv4.tcp | grep -E "rmem|wmem|congestion|sack" > "${BACKUP_DIR}/backup_${ts}.conf" 2>/dev/null
+                echo -e "\n${GREEN}✅ TCP 参数备份成功！${NC}"
+                pause_for_enter
+                ;;
+            2)
+                shopt -s nullglob; local backups=("${BACKUP_DIR}"/backup_*.conf); shopt -u nullglob
+                if [ ${#backups[@]} -eq 0 ]; then echo -e "\n${RED}无备份记录。${NC}"; pause_for_enter; continue; fi
+                
+                while true; do
+                    echo -e "\n${CYAN}请选择要恢复的时间点：${NC}"
+                    for i in "${!backups[@]}"; do echo -e "  ${GREEN}$((i+1)).${NC} 备份日期: $(stat -c "%y" "${backups[$i]}" | cut -d'.' -f1)"; done
+                    read -r -p "▶ 请输入编号 (0取消): " res_opt
+                    res_opt="${res_opt// /}" # iPad空格剔除
+                    
+                    if [ "$res_opt" == "0" ]; then break; fi
+                    if [[ "$res_opt" =~ ^[0-9]+$ ]] && [ "$res_opt" -ge 1 ] && [ "$res_opt" -le "${#backups[@]}" ]; then
+                        if ! confirm_action "覆盖当前配置并还原至此备份"; then break; fi
+                        sysctl -p "${backups[$((res_opt-1))]}" > /dev/null 2>&1
+                        rm -f "$CUSTOM_CONF"; echo -e "\n${GREEN}✅ 参数已成功还原！${NC}"
+                        pause_for_enter
+                        break
+                    else
+                        echo -e "${RED}[错误] 输入无效编号，请重新输入！${NC}"
+                    fi
+                done
+                ;;
+            3)
+                shopt -s nullglob; local backups=("${BACKUP_DIR}"/backup_*.conf); shopt -u nullglob
+                if [ ${#backups[@]} -eq 0 ]; then echo -e "\n${YELLOW}备份目录为空。${NC}"; pause_for_enter; continue; fi
+                
+                while true; do
+                    echo -e "\n${CYAN}请选择要删除的备份：${NC}"
+                    for i in "${!backups[@]}"; do echo -e "  ${GREEN}$((i+1)).${NC} 备份日期: $(stat -c "%y" "${backups[$i]}" | cut -d'.' -f1)"; done
+                    echo -e "  ${RED}99.${NC} 清空所有"
+                    read -r -p "▶ 请输入编号 (0取消): " del_opt
+                    del_opt="${del_opt// /}" # iPad空格剔除
+                    
+                    if [ "$del_opt" == "0" ]; then break; fi
+                    if [[ "$del_opt" =~ ^[0-9]+$ ]] && [ "$del_opt" -ge 1 ] && [ "$del_opt" -le "${#backups[@]}" ]; then
+                        if ! confirm_action "永久删除此备份"; then break; fi
+                        rm -f "${backups[$((del_opt-1))]}"; echo -e "\n${GREEN}✅ 记录已删除。${NC}"
+                        pause_for_enter
+                        break
+                    elif [ "$del_opt" -eq 99 ]; then
+                        if ! confirm_action "永久清空所有备份"; then break; fi
+                        rm -f "${BACKUP_DIR}"/backup_*.conf; echo -e "\n${GREEN}✅ 已清空所有备份。${NC}"
+                        pause_for_enter
+                        break
+                    else
+                        echo -e "${RED}[错误] 编号输入无效，请重新选择列表中存在的选项！${NC}"
+                    fi
+                done
+                ;;
+            0) return ;;
+            *) echo -e "\n${RED}[错误] 输入无效，请输入 0-3 之间的数字！${NC}"; sleep 1 ;;
+        esac
+    done
 }
 
 # =========================================================
@@ -481,14 +552,38 @@ delete_node() {
     fi
 
     echo ""
-    read -r -p "▶ 请输入要删除的节点【端口号】 (输入 0 取消): " del_port
-    del_port="${del_port// /}" # iPad空格剔除
-    if [ "$del_port" == "0" ] || [ -z "$del_port" ]; then return; fi
     
-    if ! [[ "$del_port" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}[错误] 端口号必须是纯数字！${NC}"
-        pause_for_enter; return
-    fi
+    # 严格端口校验防呆，提前阻拦不正确的输入
+    while true; do
+        read -r -p "▶ 请输入要删除的节点【端口号】 (输入 0 取消): " del_port
+        del_port="${del_port// /}" # iPad空格剔除
+        if [ "$del_port" == "0" ]; then return; fi
+        
+        if [ -z "$del_port" ]; then
+            echo -e "${RED}[错误] 端口号不能为空，请重新输入！${NC}"
+            continue
+        fi
+        
+        if ! [[ "$del_port" =~ ^[0-9]+$ ]]; then
+            echo -e "${RED}[错误] 端口号必须是纯数字！请重新输入。${NC}"
+            continue
+        fi
+        
+        # 预先检查端口是否真的存在于配置中
+        local port_exists=0
+        if [ -f "/usr/local/etc/xray/config.json" ] && jq -e ".inbounds[] | select(.port == $del_port)" /usr/local/etc/xray/config.json > /dev/null 2>&1; then
+            port_exists=1
+        fi
+        if [ -f "/etc/sing-box/config.json" ] && jq -e ".inbounds[] | select(.listen_port == $del_port)" /etc/sing-box/config.json > /dev/null 2>&1; then
+            port_exists=1
+        fi
+        
+        if [ "$port_exists" -eq 0 ]; then
+            echo -e "${RED}[错误] 当前部署中未找到端口为 $del_port 的节点配置，请检查后重新输入！${NC}"
+            continue
+        fi
+        break
+    done
 
     if ! confirm_action "永久删除端口为 $del_port 的节点"; then pause_for_enter; return; fi
     
@@ -512,10 +607,6 @@ delete_node() {
             echo -e "${GREEN}✅ 已成功移除 Sing-box 中占用端口 $del_port 的节点配置！${NC}"
             deleted=1
         fi
-    fi
-    
-    if [ "$deleted" -eq 0 ]; then
-        echo -e "${RED}[错误] 当前配置文件中未找到端口为 $del_port 的节点。${NC}"
     fi
     
     pause_for_enter
@@ -632,7 +723,7 @@ install_reality_node() {
 }
 
 install_ws_tls_node() {
-    clear; print_divider; echo -e "       ☁️ 部署 VLESS-WS-TLS (套 CDN 优选 IP / 拯救被墙机器)    "; print_divider
+    clear; print_divider; echo -e "       ☁️ 部署 VLESS-WS-TLS (套 CDN 优选 IP /拯救被墙机器)    "; print_divider
     echo -e "\n${YELLOW}【提醒】此模式完美支持 Cloudflare，适合隐藏 IP 或复活机器。${NC}\n"
     
     # 【修复：域名防呆与重试】
@@ -919,7 +1010,7 @@ while true; do
     clear
     echo ""
     print_divider
-    echo -e "${PURPLE}           🌟 VPS Box 全能服务器管家与部署工具箱 v1.8.2 🌟${NC}"
+    echo -e "${PURPLE}           🌟 VPS Box 全能服务器管家与部署工具箱 v2.0.1 🌟${NC}"
     print_divider
     
     # 顶部基础信息 (无图标)
