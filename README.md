@@ -11,6 +11,9 @@
 ## 🚀 一键下载与运行
 在你的 VPS 终端（建议 root 用户）复制并粘贴以下命令
 
-bash <(curl -sL https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh)
+```bash
+bash <(curl -sL https://raw.githubusercontent.com/8088892/VPSBox/refs/heads/main/vpsbox.sh)
+```
+
 
 
