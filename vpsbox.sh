@@ -25,6 +25,18 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# 【修复 4：系统兼容性拦截，防止非 Debian/Ubuntu 系统执行强绑定 apt 命令导致崩溃】
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    if [[ "$ID" != "debian" && "$ID" != "ubuntu" ]]; then
+        echo -e "\n${RED}[错误] VPSBox 当前仅支持 Debian 或 Ubuntu 系统！您的系统是 $ID，强行运行可能导致系统损坏。${NC}\n"
+        exit 1
+    fi
+else
+    echo -e "\n${RED}[错误] 无法识别的操作系统！${NC}\n"
+    exit 1
+fi
+
 if ! grep -q "$(hostname)" /etc/hosts; then
     echo "127.0.1.1 $(hostname)" >> /etc/hosts
 fi
@@ -374,6 +386,15 @@ EOF
                 ;;
             3)
                 if ! confirm_action "卸载 BBRv3 (完成后将重启服务器)"; then continue; fi
+                # 【修复 2：卸载内核安全后路防变砖】
+                if ! dpkg -l | grep -qE "linux-image-(generic|amd64)"; then
+                    echo -e "\n${YELLOW}>>> [安全拦截] 未检测到系统原生备用内核，正在自动安装...${NC}"
+                    if grep -qi ubuntu /etc/os-release; then
+                        apt install -y linux-image-generic
+                    else
+                        apt install -y linux-image-amd64
+                    fi
+                fi
                 echo -e "\n${CYAN}>>> 正在清理内核文件...${NC}"
                 apt purge -y "^linux-image.*xanmod.*" "^linux-headers.*xanmod.*"
                 rm -f /etc/apt/sources.list.d/xanmod-release.list /usr/share/keyrings/xanmod-archive-keyring.gpg
@@ -645,7 +666,6 @@ install_reality_node() {
     clear; print_divider; echo -e "       🌍 部署 VLESS-Reality (直连低延迟 / 强力防封锁)    "; print_divider
     echo -e "\n${YELLOW}【提醒】此模式抗封锁能力极强，但必须使用本机真实 IP 直连。${NC}\n"
     
-    # 【修复：端口防呆与重试】
     while true; do
         read -r -p "▶ 请输入监听端口 (默认 50000, 0 取消): " PORT
         PORT="${PORT// /}"
@@ -662,7 +682,6 @@ install_reality_node() {
         break
     done
     
-    # 【修复：内核选项防呆与重试】
     while true; do
         echo -e "\n  ${GREEN}1.${NC} Xray-core (经典稳定)\n  ${GREEN}2.${NC} Sing-box (轻量极速)"
         read -r -p "▶ 选择运行内核 [1-2, 默认 1, 0 取消]: " core_choice
@@ -676,7 +695,6 @@ install_reality_node() {
         break
     done
     
-    # 【核心修复：完美支持自定义 SNI】
     echo -e "\n  ${GREEN}1.${NC} gateway.icloud.com (苹果官网)\n  ${GREEN}2.${NC} www.microsoft.com (微软官网)"
     read -r -p "▶ 选择伪装 SNI [输入 1-2 选择，或直接输入自定义域名, 默认 1, 0 取消]: " sni_choice
     sni_choice="${sni_choice// /}"
@@ -726,7 +744,6 @@ install_ws_tls_node() {
     clear; print_divider; echo -e "       ☁️ 部署 VLESS-WS-TLS (套 CDN 优选 IP /拯救被墙机器)    "; print_divider
     echo -e "\n${YELLOW}【提醒】此模式完美支持 Cloudflare，适合隐藏 IP 或复活机器。${NC}\n"
     
-    # 【修复：域名防呆与重试】
     while true; do
         read -r -p "▶ 请输入域名 (输入 0 取消): " DOMAIN
         DOMAIN="${DOMAIN// /}"
@@ -736,15 +753,11 @@ install_ws_tls_node() {
             continue
         fi
         
-        DOMAIN_IP=$(ping -c 1 "$DOMAIN" 2>/dev/null | grep -E -o "([0-9]{1,3}[\.]){3}[0-9]{1,3}" | head -1)
-        if [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
-            echo -e "${RED}[错误] 域名解析 IP ($DOMAIN_IP) 与本机 IP ($SERVER_IP) 不符！请检查解析或重新输入。${NC}"
-            continue
-        fi
+        # 【修复 5：完美兼容 IPv4 / IPv6 的地址提取】
+        DOMAIN_IP=$(ping -c 1 -n "$DOMAIN" 2>/dev/null | head -n 1 | awk -F '[()]' '{print $2}')
         break
     done
     
-    # 【修复：端口防呆与重试】
     while true; do
         read -r -p "▶ 监听端口 (默认 443, 0 取消): " WS_PORT
         WS_PORT="${WS_PORT// /}"
@@ -761,7 +774,6 @@ install_ws_tls_node() {
         break
     done
     
-    # 【修复：内核选项防呆与重试】
     while true; do
         echo -e "\n  ${GREEN}1.${NC} Xray-core\n  ${GREEN}2.${NC} Sing-box"
         read -r -p "▶ 运行内核 [1-2, 默认 1, 0 取消]: " core_choice
@@ -775,13 +787,67 @@ install_ws_tls_node() {
         break
     done
     
+    # 【新增功能 1：双轨制证书申请模式选择】
+    echo -e "\n${CYAN}>>> 证书申请模式选择${NC}"
+    echo -e "  ${GREEN}1.${NC} 【推荐】我已开启 CDN (小黄云) -> 使用 Cloudflare API 申请证书 (无视 CDN，自动续签)"
+    echo -e "  ${GREEN}2.${NC} 【常规】我未开启 CDN (真实 IP) -> 使用常规 80 端口申请证书"
+    while true; do
+        read -r -p "▶ 选择模式 [1-2, 默认 2, 0 取消]: " cert_mode
+        cert_mode="${cert_mode// /}"
+        if [ "$cert_mode" == "0" ]; then return; fi; [ -z "$cert_mode" ] && cert_mode=2
+        
+        if [[ "$cert_mode" != "1" && "$cert_mode" != "2" ]]; then
+            echo -e "${RED}[错误] 无效选择，请重新输入。${NC}"; continue
+        fi
+        
+        if [ "$cert_mode" == "1" ]; then
+            echo -e "\n${YELLOW}【引导】请前往 Cloudflare 后台 -> 我的个人资料 -> API 令牌 -> 创建令牌 -> 使用【编辑区域 DNS】模板。${NC}"
+            read -r -p "▶ 请输入您的 Cloudflare API Token: " CF_Token
+            if [ -z "$CF_Token" ]; then echo -e "${RED}[错误] Token 不能为空！${NC}"; continue; fi
+            export CF_Token="$CF_Token"
+            break
+        elif [ "$cert_mode" == "2" ]; then
+            if [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
+                echo -e "\n${YELLOW}[警告] 域名解析 IP ($DOMAIN_IP) 与本机 IP ($SERVER_IP) 不符！${NC}"
+                echo -e "如果你正在使用 Cloudflare CDN，常规 80 端口申请将被拦截！建议选 1，或者去 CF 关闭小黄云后再试。"
+                read -r -p "▶ 是否确认你已关闭小黄云，或确认要强制继续？(y/n, 默认 n): " force_continue
+                force_continue="${force_continue// /}"
+                if [[ ! "$force_continue" =~ ^[yY]$ ]]; then
+                    echo -e "${YELLOW}请重新选择证书模式或修改解析。${NC}"
+                    continue
+                fi
+            fi
+            break
+        fi
+    done
+
     if ! confirm_action "开始部署 WS+TLS 节点并申请证书"; then pause_for_enter; return; fi
     install_dependencies
     
     [ ! -d "/root/.acme.sh" ] && curl https://get.acme.sh | sh >/dev/null 2>&1
-    /root/.acme.sh/acme.sh --register-account -m "admin@$DOMAIN" --server letsencrypt >/dev/null 2>&1
-    fuser -k 80/tcp > /dev/null 2>&1
-    /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256 --server letsencrypt >/dev/null 2>&1
+    /root/.acme.sh/acme.sh --upgrade --auto-upgrade >/dev/null 2>&1
+    /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1
+    
+    echo -e "\n${CYAN}>>> 正在申请 SSL 证书，请耐心等待...${NC}"
+    
+    # 【修复 3：解耦证书申请与报错阻断机制】
+    if [ "$cert_mode" == "1" ]; then
+        /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf -k ec-256
+        CERT_RES=$?
+    else
+        if ss -tulpn | grep -q ":80 "; then
+            echo -e "${YELLOW}[警告] 80 端口被占用，正在尝试临时释放...${NC}"
+            fuser -k 80/tcp > /dev/null 2>&1
+        fi
+        /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
+        CERT_RES=$?
+    fi
+
+    if [ $CERT_RES -ne 0 ]; then
+        echo -e "\n${RED}[错误] 证书申请失败！请检查域名解析、CDN 设置或 API Token 是否正确。部署已中止。${NC}"
+        pause_for_enter
+        return
+    fi
     
     CERT_DIR="/etc/vpsbox-cert"; mkdir -p "$CERT_DIR"
     /root/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --ecc --fullchain-file "$CERT_DIR/fullchain.pem" --key-file "$CERT_DIR/privkey.pem" >/dev/null 2>&1
@@ -816,7 +882,6 @@ install_ws_tls_node() {
 install_hy2_node() {
     clear; print_divider; echo -e "       ⚡ 部署 Hysteria2 (暴力 UDP 发包 / 抢占高带宽)    "; print_divider
     
-    # 【修复：域名防呆与重试】
     while true; do
         read -r -p "▶ 请输入域名 (输入 0 取消): " DOMAIN
         DOMAIN="${DOMAIN// /}"
@@ -826,15 +891,10 @@ install_hy2_node() {
             continue
         fi
         
-        DOMAIN_IP=$(ping -c 1 "$DOMAIN" 2>/dev/null | grep -E -o "([0-9]{1,3}[\.]){3}[0-9]{1,3}" | head -1)
-        if [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
-            echo -e "${RED}[错误] 域名解析 IP ($DOMAIN_IP) 与本机 IP ($SERVER_IP) 不符！请检查解析或重新输入。${NC}"
-            continue
-        fi
+        DOMAIN_IP=$(ping -c 1 -n "$DOMAIN" 2>/dev/null | head -n 1 | awk -F '[()]' '{print $2}')
         break
     done
     
-    # 【修复：端口防呆与重试】
     while true; do
         read -r -p "▶ 监听端口 (默认 8443, 0 取消): " HY2_PORT
         HY2_PORT="${HY2_PORT// /}"
@@ -851,7 +911,6 @@ install_hy2_node() {
         break
     done
     
-    # 【修复：内核选项防呆与重试】
     while true; do
         echo -e "\n  ${GREEN}1.${NC} Xray-core\n  ${GREEN}2.${NC} Sing-box"
         read -r -p "▶ 运行内核 [1-2, 默认 1, 0 取消]: " core_choice
@@ -865,12 +924,65 @@ install_hy2_node() {
         break
     done
     
+    echo -e "\n${CYAN}>>> 证书申请模式选择${NC}"
+    echo -e "  ${GREEN}1.${NC} 【推荐】我已开启 CDN (小黄云) -> 使用 Cloudflare API 申请证书 (无视 CDN，自动续签)"
+    echo -e "  ${GREEN}2.${NC} 【常规】我未开启 CDN (真实 IP) -> 使用常规 80 端口申请证书"
+    while true; do
+        read -r -p "▶ 选择模式 [1-2, 默认 2, 0 取消]: " cert_mode
+        cert_mode="${cert_mode// /}"
+        if [ "$cert_mode" == "0" ]; then return; fi; [ -z "$cert_mode" ] && cert_mode=2
+        
+        if [[ "$cert_mode" != "1" && "$cert_mode" != "2" ]]; then
+            echo -e "${RED}[错误] 无效选择，请重新输入。${NC}"; continue
+        fi
+        
+        if [ "$cert_mode" == "1" ]; then
+            echo -e "\n${YELLOW}【引导】请前往 Cloudflare 后台 -> 我的个人资料 -> API 令牌 -> 创建令牌 -> 使用【编辑区域 DNS】模板。${NC}"
+            read -r -p "▶ 请输入您的 Cloudflare API Token: " CF_Token
+            if [ -z "$CF_Token" ]; then echo -e "${RED}[错误] Token 不能为空！${NC}"; continue; fi
+            export CF_Token="$CF_Token"
+            break
+        elif [ "$cert_mode" == "2" ]; then
+            if [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
+                echo -e "\n${YELLOW}[警告] 域名解析 IP ($DOMAIN_IP) 与本机 IP ($SERVER_IP) 不符！${NC}"
+                echo -e "如果你正在使用 Cloudflare CDN，常规 80 端口申请将被拦截！建议选 1，或者去 CF 关闭小黄云后再试。"
+                read -r -p "▶ 是否确认你已关闭小黄云，或确认要强制继续？(y/n, 默认 n): " force_continue
+                force_continue="${force_continue// /}"
+                if [[ ! "$force_continue" =~ ^[yY]$ ]]; then
+                    echo -e "${YELLOW}请重新选择证书模式或修改解析。${NC}"
+                    continue
+                fi
+            fi
+            break
+        fi
+    done
+    
     if ! confirm_action "开始部署 Hysteria2 节点并申请证书"; then pause_for_enter; return; fi
     install_dependencies
     
     [ ! -d "/root/.acme.sh" ] && curl https://get.acme.sh | sh >/dev/null 2>&1
-    fuser -k 80/tcp > /dev/null 2>&1
-    /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256 --server letsencrypt >/dev/null 2>&1
+    /root/.acme.sh/acme.sh --upgrade --auto-upgrade >/dev/null 2>&1
+    /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1
+    
+    echo -e "\n${CYAN}>>> 正在申请 SSL 证书，请耐心等待...${NC}"
+    
+    if [ "$cert_mode" == "1" ]; then
+        /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf -k ec-256
+        CERT_RES=$?
+    else
+        if ss -tulpn | grep -q ":80 "; then
+            echo -e "${YELLOW}[警告] 80 端口被占用，正在尝试临时释放...${NC}"
+            fuser -k 80/tcp > /dev/null 2>&1
+        fi
+        /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
+        CERT_RES=$?
+    fi
+
+    if [ $CERT_RES -ne 0 ]; then
+        echo -e "\n${RED}[错误] 证书申请失败！请检查域名解析、CDN 设置或 API Token 是否正确。部署已中止。${NC}"
+        pause_for_enter
+        return
+    fi
     
     CERT_DIR="/etc/vpsbox-cert"; mkdir -p "$CERT_DIR"
     /root/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --ecc --fullchain-file "$CERT_DIR/fullchain.pem" --key-file "$CERT_DIR/privkey.pem" >/dev/null 2>&1
