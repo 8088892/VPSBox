@@ -828,22 +828,29 @@ install_ws_tls_node() {
     /root/.acme.sh/acme.sh --upgrade --auto-upgrade >/dev/null 2>&1
     /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1
     
-    echo -e "\n${CYAN}>>> 正在申请 SSL 证书，请耐心等待...${NC}"
+    echo -e "\n${CYAN}>>> 正在检查并申请 SSL 证书，请耐心等待...${NC}"
     
-    # 【修复 3：解耦证书申请与报错阻断机制】
-    if [ "$cert_mode" == "1" ]; then
-        /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf -k ec-256
-        CERT_RES=$?
+    # 【新增功能：智能复用检测】检查本机是否已存在该域名的有效证书
+    if /root/.acme.sh/acme.sh --list | grep -q "$DOMAIN"; then
+        echo -e "${GREEN}✅ 检测到本机已存在 [$DOMAIN] 的有效证书，触发自动复用机制！${NC}"
+        CERT_RES=0
     else
-        if ss -tulpn | grep -q ":80 "; then
-            echo -e "${YELLOW}[警告] 80 端口被占用，正在尝试临时释放...${NC}"
-            fuser -k 80/tcp > /dev/null 2>&1
+        if [ "$cert_mode" == "1" ]; then
+            /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf -k ec-256
+            CERT_RES=$?
+        else
+            echo -e "${YELLOW}[提醒] 您选择了常规 80 端口申请。若部署后在此域名开启 CDN (小黄云)，证书将在 3 个月后无法自动续期！${NC}"
+            if ss -tulpn | grep -q ":80 "; then
+                echo -e "${YELLOW}[警告] 80 端口被占用，正在尝试临时释放...${NC}"
+                fuser -k 80/tcp > /dev/null 2>&1
+            fi
+            /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
+            CERT_RES=$?
         fi
-        /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
-        CERT_RES=$?
     fi
 
-    if [ $CERT_RES -ne 0 ]; then
+    # 【修复：兼容状态码 2】acme.sh 返回 0 (成功) 或 2 (跳过/未改变) 都算通过
+    if [ "$CERT_RES" -ne 0 ] && [ "$CERT_RES" -ne 2 ]; then
         echo -e "\n${RED}[错误] 证书申请失败！请检查域名解析、CDN 设置或 API Token 是否正确。部署已中止。${NC}"
         pause_for_enter
         return
@@ -964,21 +971,27 @@ install_hy2_node() {
     /root/.acme.sh/acme.sh --upgrade --auto-upgrade >/dev/null 2>&1
     /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1
     
-    echo -e "\n${CYAN}>>> 正在申请 SSL 证书，请耐心等待...${NC}"
+    echo -e "\n${CYAN}>>> 正在检查并申请 SSL 证书，请耐心等待...${NC}"
     
-    if [ "$cert_mode" == "1" ]; then
-        /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf -k ec-256
-        CERT_RES=$?
+    if /root/.acme.sh/acme.sh --list | grep -q "$DOMAIN"; then
+        echo -e "${GREEN}✅ 检测到本机已存在 [$DOMAIN] 的有效证书，触发自动复用机制！${NC}"
+        CERT_RES=0
     else
-        if ss -tulpn | grep -q ":80 "; then
-            echo -e "${YELLOW}[警告] 80 端口被占用，正在尝试临时释放...${NC}"
-            fuser -k 80/tcp > /dev/null 2>&1
+        if [ "$cert_mode" == "1" ]; then
+            /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf -k ec-256
+            CERT_RES=$?
+        else
+            echo -e "${YELLOW}[提醒] 您选择了常规 80 端口申请。若部署后在此域名开启 CDN (小黄云)，证书将在 3 个月后无法自动续期！${NC}"
+            if ss -tulpn | grep -q ":80 "; then
+                echo -e "${YELLOW}[警告] 80 端口被占用，正在尝试临时释放...${NC}"
+                fuser -k 80/tcp > /dev/null 2>&1
+            fi
+            /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
+            CERT_RES=$?
         fi
-        /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
-        CERT_RES=$?
     fi
 
-    if [ $CERT_RES -ne 0 ]; then
+    if [ "$CERT_RES" -ne 0 ] && [ "$CERT_RES" -ne 2 ]; then
         echo -e "\n${RED}[错误] 证书申请失败！请检查域名解析、CDN 设置或 API Token 是否正确。部署已中止。${NC}"
         pause_for_enter
         return
