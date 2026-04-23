@@ -31,7 +31,7 @@ fi
 
 # 注册全局快捷命令
 if [[ "$(realpath "$0")" != "$SHORTCUT_PATH" ]]; then
-    cp "$0" "$SHORTCUT_PATH"
+    curl -sL https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh -o "$SHORTCUT_PATH"
     chmod +x "$SHORTCUT_PATH"
 fi
 
