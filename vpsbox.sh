@@ -778,6 +778,7 @@ manage_ufw() {
                 pause_for_enter
                 ;;
             4)
+                if ! confirm_action "开启防火墙并强制放行 22 端口"; then continue; fi
                 echo -e "\n${YELLOW}为防止你与服务器失联，正在强制放行 22 端口...${NC}"
                 ufw allow 22/tcp
                 ufw --force enable
@@ -785,6 +786,7 @@ manage_ufw() {
                 pause_for_enter
                 ;;
             5)
+                if ! confirm_action "彻底关闭防火墙"; then continue; fi
                 ufw disable
                 echo -e "${GREEN}✅ 防火墙已完全关闭！${NC}"
                 pause_for_enter
@@ -793,6 +795,21 @@ manage_ufw() {
             *) echo -e "\n${RED}输入无效！${NC}"; sleep 1 ;;
         esac
     done
+}
+
+# =========================================================
+#                       卸载模块
+# =========================================================
+
+uninstall_vpsbox() {
+    print_separator
+    echo -e "${YELLOW}【警告】此操作将彻底删除 VPSBox 的快捷命令及本地备份目录。${NC}"
+    if ! confirm_action "彻底卸载 VPSBox"; then return; fi
+    
+    rm -f /usr/local/bin/vpsbox
+    rm -rf /etc/vpsbox_backups
+    echo -e "\n${GREEN}[成功] VPSBox 已彻底卸载！系统已无任何残留，期待与您下次相遇！${NC}"
+    exit 0
 }
 
 # =========================================================
@@ -834,12 +851,13 @@ while true; do
     echo -e "\n  ${CYAN}【附加实用工具与安全拓展】${NC}"
     echo -e "  ${GREEN}19.${NC} Cloudflare WARP 一键解锁      ${YELLOW}(获取干净 IP / 规避验证码)${NC}"
     echo -e "  ${GREEN}20.${NC} UFW 防火墙简单端口管理        ${YELLOW}(防呆管理 / 一键放行端口)${NC}"
+    echo -e "  ${RED}99.${NC} 彻底卸载 VPSBox 及系统残留"
 
     print_separator
     echo -e "  ${GREEN}0.${NC} 安全退出"
     print_divider
     echo ""
-    read -r -p "▶ 请输入选择 [0-20]: " OPTION
+    read -r -p "▶ 请输入选择 [0-20, 99]: " OPTION
     OPTION="${OPTION// /}" # iPad空格剔除
     
     case $OPTION in
@@ -863,6 +881,7 @@ while true; do
         18) delete_node ;;
         19) install_warp ;;
         20) manage_ufw ;;
+        99) uninstall_vpsbox ;;
         0) echo -e "\n${GREEN}[感谢使用] 正在退出...${NC}\n"; exit 0 ;;
         *) echo -e "\n${RED}[提示] 编号不存在！${NC}"; sleep 1 ;;
     esac
