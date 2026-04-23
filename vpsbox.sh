@@ -3,7 +3,7 @@
 # =====================================================================
 # 项目名称: VPS Box (全能服务器优化与多节点部署工具箱)
 # 核心特性: 全局防冲突部署、智能复用证书、双内核自适应、系统管家
-# 版本: v1.8.2 (引入智能依赖检测 + 保持原版 UI 描述与自适应排版)
+# 版本: v2.0 (引入智能依赖检测 + 保持原版 UI 描述与自适应排版)
 # =====================================================================
 
 RED='\033[0;31m'
@@ -557,10 +557,19 @@ install_reality_node() {
     core_choice="${core_choice// /}" # iPad空格剔除
     if [ "$core_choice" == "0" ]; then return; fi; [ -z "$core_choice" ] && core_choice=1
     
+    # [核心修复区域] 优化 SNI 选择逻辑，完美支持自定义输入
     echo -e "\n  ${GREEN}1.${NC} gateway.icloud.com (苹果官网)\n  ${GREEN}2.${NC} www.microsoft.com (微软官网)"
-    read -r -p "▶ 选择伪装 SNI [1-2, 默认 1, 0 取消]: " sni_choice
+    read -r -p "▶ 选择伪装 SNI [输入 1-2 选择，或直接输入自定义域名, 默认 1, 0 取消]: " sni_choice
     sni_choice="${sni_choice// /}" # iPad空格剔除
-    if [ "$sni_choice" == "0" ]; then return; fi; [ "$sni_choice" == "2" ] && SNI_DOMAIN="www.microsoft.com" || SNI_DOMAIN="gateway.icloud.com"
+    if [ "$sni_choice" == "0" ]; then return; fi
+    
+    if [[ -z "$sni_choice" || "$sni_choice" == "1" ]]; then
+        SNI_DOMAIN="gateway.icloud.com"
+    elif [[ "$sni_choice" == "2" ]]; then
+        SNI_DOMAIN="www.microsoft.com"
+    else
+        SNI_DOMAIN="$sni_choice" # 如果不是回车、1、2、0，则捕获为自定义域名
+    fi
     
     if ! confirm_action "开始部署 Reality 节点"; then pause_for_enter; return; fi
     install_dependencies
