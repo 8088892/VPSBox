@@ -3,7 +3,7 @@
 # =====================================================================
 # 项目名称: VPS Box (全能服务器优化与多节点部署工具箱)
 # 核心特性: 全局防冲突部署、智能复用证书、双内核自适应、系统管家
-# 版本: v2.0 (引入智能依赖检测 + 保持原版 UI 描述与自适应排版)
+# 版本: v2.1 (引入智能依赖检测 + 保持原版 UI 描述与自适应排版)
 # =====================================================================
 
 RED='\033[0;31m'
@@ -160,14 +160,18 @@ setup_ssh_key() {
 change_ssh_port() {
     clear; print_divider; echo -e "       🚪 修改 SSH 默认登录端口    "; print_divider
     echo -e "${YELLOW}【防爆破】修改默认 22 端口可以有效抵御 90% 的脚本扫描。${NC}"
-    read -r -p "▶ 请输入新的 SSH 端口号 (建议 10000-65535，输入 0 取消): " new_port
-    new_port="${new_port// /}" # iPad空格剔除
-    if [ "$new_port" == "0" ] || [ -z "$new_port" ]; then return; fi
     
-    if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -le 1024 ] || [ "$new_port" -ge 65535 ]; then
-        echo -e "${RED}[错误] 端口号必须在 1024 到 65535 之间！${NC}"
-        pause_for_enter; return
-    fi
+    while true; do
+        read -r -p "▶ 请输入新的 SSH 端口号 (建议 10000-65535，输入 0 取消): " new_port
+        new_port="${new_port// /}" # iPad空格剔除
+        if [ "$new_port" == "0" ] || [ -z "$new_port" ]; then return; fi
+        
+        if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -le 1024 ] || [ "$new_port" -ge 65535 ]; then
+            echo -e "${RED}[错误] 端口号必须在 1024 到 65535 之间！请重新输入。${NC}"
+            continue
+        fi
+        break
+    done
     
     if ! confirm_action "将 SSH 端口修改为 $new_port"; then pause_for_enter; return; fi
     
@@ -217,24 +221,27 @@ manage_swap() {
     
     case $swap_opt in
         1)
-            read -r -p "▶ 请输入 Swap 大小 (单位 MB，例如 1024): " input_size
-            input_size="${input_size// /}" # iPad空格剔除
-            if [[ "$input_size" =~ ^[0-9]+$ ]]; then
-                if ! confirm_action "设置 ${input_size}MB 的 Swap"; then pause_for_enter; return; fi
-                echo -e "\n${CYAN}>>> 正在配置 ${input_size}MB Swap，请稍候...${NC}"
-                swapoff -a
-                rm -f /swapfile
-                dd if=/dev/zero of=/swapfile bs=1M count=$input_size status=progress
-                chmod 600 /swapfile
-                mkswap /swapfile
-                swapon /swapfile
-                if ! grep -q "/swapfile" /etc/fstab; then
-                    echo "/swapfile none swap sw 0 0" >> /etc/fstab
+            while true; do
+                read -r -p "▶ 请输入 Swap 大小 (单位 MB，例如 1024): " input_size
+                input_size="${input_size// /}" # iPad空格剔除
+                if [[ "$input_size" =~ ^[0-9]+$ ]]; then
+                    break
+                else
+                    echo -e "${RED}[错误] 输入无效，请输入纯数字。${NC}"
                 fi
-                echo -e "${GREEN}✅ Swap 设置成功！${NC}"
-            else
-                echo -e "${RED}[错误] 输入无效。${NC}"
+            done
+            if ! confirm_action "设置 ${input_size}MB 的 Swap"; then pause_for_enter; return; fi
+            echo -e "\n${CYAN}>>> 正在配置 ${input_size}MB Swap，请稍候...${NC}"
+            swapoff -a
+            rm -f /swapfile
+            dd if=/dev/zero of=/swapfile bs=1M count=$input_size status=progress
+            chmod 600 /swapfile
+            mkswap /swapfile
+            swapon /swapfile
+            if ! grep -q "/swapfile" /etc/fstab; then
+                echo "/swapfile none swap sw 0 0" >> /etc/fstab
             fi
+            echo -e "${GREEN}✅ Swap 设置成功！${NC}"
             ;;
         2)
             if ! confirm_action "关闭并删除现有 Swap"; then pause_for_enter; return; fi
@@ -435,7 +442,6 @@ view_deployed_nodes() {
     
     echo -e "${CYAN}--- Xray 内核节点 ---${NC}"
     if [ -f "/usr/local/etc/xray/config.json" ] && grep -q "inbounds" "/usr/local/etc/xray/config.json"; then
-        # 修复 Hysteria 的 UDP 显示
         jq -r '.inbounds[] | "端口: \(.port) | 主协议: \(.protocol) | 网络/伪装: \(if .protocol == "hysteria" then "udp" else (.streamSettings.network // "tcp") end) | 安全/加密: \(.streamSettings.security // "none")"' /usr/local/etc/xray/config.json 2>/dev/null || echo -e "${YELLOW}配置文件解析失败。${NC}"
     else
         echo -e "${YELLOW}未检测到 Xray 节点配置。${NC}"
@@ -443,7 +449,6 @@ view_deployed_nodes() {
     
     echo -e "\n${CYAN}--- Sing-box 内核节点 ---${NC}"
     if [ -f "/etc/sing-box/config.json" ] && grep -q "inbounds" "/etc/sing-box/config.json"; then
-        # 修复 Hysteria2 的 UDP 显示
         jq -r '.inbounds[] | "端口: \(.listen_port) | 主协议: \(.type) | 网络/伪装: \(if .type == "hysteria2" then "udp" else (.transport.type // "tcp") end) | 安全/加密: \(if .tls.reality.enabled then "reality" elif .tls.enabled then "tls" else "none" end)"' /etc/sing-box/config.json 2>/dev/null || echo -e "${YELLOW}配置文件解析失败。${NC}"
     else
         echo -e "${YELLOW}未检测到 Sing-box 节点配置。${NC}"
@@ -548,19 +553,41 @@ EOF
 install_reality_node() {
     clear; print_divider; echo -e "       🌍 部署 VLESS-Reality (直连低延迟 / 强力防封锁)    "; print_divider
     echo -e "\n${YELLOW}【提醒】此模式抗封锁能力极强，但必须使用本机真实 IP 直连。${NC}\n"
-    read -r -p "▶ 请输入监听端口 (默认 50000, 0 取消): " PORT
-    PORT="${PORT// /}" # iPad空格剔除
-    if [ "$PORT" == "0" ]; then return; fi; [ -z "$PORT" ] && PORT=50000
     
-    echo -e "\n  ${GREEN}1.${NC} Xray-core (经典稳定)\n  ${GREEN}2.${NC} Sing-box (轻量极速)"
-    read -r -p "▶ 选择运行内核 [1-2, 默认 1, 0 取消]: " core_choice
-    core_choice="${core_choice// /}" # iPad空格剔除
-    if [ "$core_choice" == "0" ]; then return; fi; [ -z "$core_choice" ] && core_choice=1
+    # 【修复：端口错误重试机制】
+    while true; do
+        read -r -p "▶ 请输入监听端口 (默认 50000, 0 取消): " PORT
+        PORT="${PORT// /}"
+        if [ "$PORT" == "0" ]; then return; fi; [ -z "$PORT" ] && PORT=50000
+        
+        if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+            echo -e "${RED}[错误] 端口号必须是 1 到 65535 之间的纯数字！请重新输入。${NC}"
+            continue
+        fi
+        if ss -tulpn | grep -qw ":$PORT"; then
+            echo -e "${RED}[错误] 端口 $PORT 已被其他程序占用，请更换其他端口！${NC}"
+            continue
+        fi
+        break
+    done
     
-    # [核心修复区域] 优化 SNI 选择逻辑，完美支持自定义输入
+    # 【修复：内核选项错误重试机制】
+    while true; do
+        echo -e "\n  ${GREEN}1.${NC} Xray-core (经典稳定)\n  ${GREEN}2.${NC} Sing-box (轻量极速)"
+        read -r -p "▶ 选择运行内核 [1-2, 默认 1, 0 取消]: " core_choice
+        core_choice="${core_choice// /}"
+        if [ "$core_choice" == "0" ]; then return; fi; [ -z "$core_choice" ] && core_choice=1
+        
+        if [[ "$core_choice" != "1" && "$core_choice" != "2" ]]; then
+            echo -e "${RED}[错误] 输入无效，只能选择 1 或 2！请重新输入。${NC}"
+            continue
+        fi
+        break
+    done
+    
     echo -e "\n  ${GREEN}1.${NC} gateway.icloud.com (苹果官网)\n  ${GREEN}2.${NC} www.microsoft.com (微软官网)"
     read -r -p "▶ 选择伪装 SNI [输入 1-2 选择，或直接输入自定义域名, 默认 1, 0 取消]: " sni_choice
-    sni_choice="${sni_choice// /}" # iPad空格剔除
+    sni_choice="${sni_choice// /}"
     if [ "$sni_choice" == "0" ]; then return; fi
     
     if [[ -z "$sni_choice" || "$sni_choice" == "1" ]]; then
@@ -568,7 +595,7 @@ install_reality_node() {
     elif [[ "$sni_choice" == "2" ]]; then
         SNI_DOMAIN="www.microsoft.com"
     else
-        SNI_DOMAIN="$sni_choice" # 如果不是回车、1、2、0，则捕获为自定义域名
+        SNI_DOMAIN="$sni_choice"
     fi
     
     if ! confirm_action "开始部署 Reality 节点"; then pause_for_enter; return; fi
@@ -606,24 +633,55 @@ install_reality_node() {
 install_ws_tls_node() {
     clear; print_divider; echo -e "       ☁️ 部署 VLESS-WS-TLS (套 CDN 优选 IP / 拯救被墙机器)    "; print_divider
     echo -e "\n${YELLOW}【提醒】此模式完美支持 Cloudflare，适合隐藏 IP 或复活机器。${NC}\n"
-    read -r -p "▶ 请输入域名 (直接回车或输入 0 取消): " DOMAIN
-    DOMAIN="${DOMAIN// /}" # iPad空格剔除
-    if [ -z "$DOMAIN" ] || [ "$DOMAIN" == "0" ]; then return; fi
-    DOMAIN_IP=$(ping -c 1 "$DOMAIN" 2>/dev/null | grep -E -o "([0-9]{1,3}[\.]){3}[0-9]{1,3}" | head -1)
     
-    if [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
-        echo -e "${RED}[错误] 域名解析 IP ($DOMAIN_IP) 与本机 IP ($SERVER_IP) 不符！${NC}"
-        pause_for_enter; return
-    fi
+    # 【修复：域名错误重试机制】
+    while true; do
+        read -r -p "▶ 请输入域名 (输入 0 取消): " DOMAIN
+        DOMAIN="${DOMAIN// /}"
+        if [ "$DOMAIN" == "0" ]; then return; fi
+        if [ -z "$DOMAIN" ]; then 
+            echo -e "${RED}[错误] 域名不能为空，请重新输入！${NC}"
+            continue
+        fi
+        
+        DOMAIN_IP=$(ping -c 1 "$DOMAIN" 2>/dev/null | grep -E -o "([0-9]{1,3}[\.]){3}[0-9]{1,3}" | head -1)
+        if [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
+            echo -e "${RED}[错误] 域名解析 IP ($DOMAIN_IP) 与本机 IP ($SERVER_IP) 不符！请检查解析或重新输入。${NC}"
+            continue
+        fi
+        break
+    done
     
-    read -r -p "▶ 监听端口 (默认 443, 0 取消): " WS_PORT
-    WS_PORT="${WS_PORT// /}" # iPad空格剔除
-    if [ "$WS_PORT" == "0" ]; then return; fi; [ -z "$WS_PORT" ] && WS_PORT=443
+    # 【修复：端口错误重试机制】
+    while true; do
+        read -r -p "▶ 监听端口 (默认 443, 0 取消): " WS_PORT
+        WS_PORT="${WS_PORT// /}"
+        if [ "$WS_PORT" == "0" ]; then return; fi; [ -z "$WS_PORT" ] && WS_PORT=443
+        
+        if ! [[ "$WS_PORT" =~ ^[0-9]+$ ]] || [ "$WS_PORT" -lt 1 ] || [ "$WS_PORT" -gt 65535 ]; then
+            echo -e "${RED}[错误] 端口号必须是 1 到 65535 之间的纯数字！请重新输入。${NC}"
+            continue
+        fi
+        if ss -tulpn | grep -qw ":$WS_PORT"; then
+            echo -e "${RED}[错误] 端口 $WS_PORT 已被占用，请更换其他端口！${NC}"
+            continue
+        fi
+        break
+    done
     
-    echo -e "\n  ${GREEN}1.${NC} Xray-core\n  ${GREEN}2.${NC} Sing-box"
-    read -r -p "▶ 运行内核 [1-2, 默认 1, 0 取消]: " core_choice
-    core_choice="${core_choice// /}" # iPad空格剔除
-    if [ "$core_choice" == "0" ]; then return; fi; [ -z "$core_choice" ] && core_choice=1
+    # 【修复：内核选项错误重试机制】
+    while true; do
+        echo -e "\n  ${GREEN}1.${NC} Xray-core\n  ${GREEN}2.${NC} Sing-box"
+        read -r -p "▶ 运行内核 [1-2, 默认 1, 0 取消]: " core_choice
+        core_choice="${core_choice// /}"
+        if [ "$core_choice" == "0" ]; then return; fi; [ -z "$core_choice" ] && core_choice=1
+        
+        if [[ "$core_choice" != "1" && "$core_choice" != "2" ]]; then
+            echo -e "${RED}[错误] 输入无效，只能选择 1 或 2！请重新输入。${NC}"
+            continue
+        fi
+        break
+    done
     
     if ! confirm_action "开始部署 WS+TLS 节点并申请证书"; then pause_for_enter; return; fi
     install_dependencies
@@ -665,24 +723,55 @@ install_ws_tls_node() {
 
 install_hy2_node() {
     clear; print_divider; echo -e "       ⚡ 部署 Hysteria2 (暴力 UDP 发包 / 抢占高带宽)    "; print_divider
-    read -r -p "▶ 请输入域名 (直接回车或输入 0 取消): " DOMAIN
-    DOMAIN="${DOMAIN// /}" # iPad空格剔除
-    if [ -z "$DOMAIN" ] || [ "$DOMAIN" == "0" ]; then return; fi
-    DOMAIN_IP=$(ping -c 1 "$DOMAIN" 2>/dev/null | grep -E -o "([0-9]{1,3}[\.]){3}[0-9]{1,3}" | head -1)
     
-    if [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
-        echo -e "${RED}[错误] 域名解析错误！${NC}"
-        pause_for_enter; return
-    fi
+    # 【修复：域名错误重试机制】
+    while true; do
+        read -r -p "▶ 请输入域名 (输入 0 取消): " DOMAIN
+        DOMAIN="${DOMAIN// /}"
+        if [ "$DOMAIN" == "0" ]; then return; fi
+        if [ -z "$DOMAIN" ]; then 
+            echo -e "${RED}[错误] 域名不能为空，请重新输入！${NC}"
+            continue
+        fi
+        
+        DOMAIN_IP=$(ping -c 1 "$DOMAIN" 2>/dev/null | grep -E -o "([0-9]{1,3}[\.]){3}[0-9]{1,3}" | head -1)
+        if [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
+            echo -e "${RED}[错误] 域名解析 IP ($DOMAIN_IP) 与本机 IP ($SERVER_IP) 不符！请检查解析或重新输入。${NC}"
+            continue
+        fi
+        break
+    done
     
-    read -r -p "▶ 监听端口 (默认 8443, 0 取消): " HY2_PORT
-    HY2_PORT="${HY2_PORT// /}" # iPad空格剔除
-    if [ "$HY2_PORT" == "0" ]; then return; fi; [ -z "$HY2_PORT" ] && HY2_PORT=8443
+    # 【修复：端口错误重试机制】
+    while true; do
+        read -r -p "▶ 监听端口 (默认 8443, 0 取消): " HY2_PORT
+        HY2_PORT="${HY2_PORT// /}"
+        if [ "$HY2_PORT" == "0" ]; then return; fi; [ -z "$HY2_PORT" ] && HY2_PORT=8443
+        
+        if ! [[ "$HY2_PORT" =~ ^[0-9]+$ ]] || [ "$HY2_PORT" -lt 1 ] || [ "$HY2_PORT" -gt 65535 ]; then
+            echo -e "${RED}[错误] 端口号必须是 1 到 65535 之间的纯数字！请重新输入。${NC}"
+            continue
+        fi
+        if ss -tulpn | grep -qw ":$HY2_PORT"; then
+            echo -e "${RED}[错误] 端口 $HY2_PORT 已被占用，请更换其他端口！${NC}"
+            continue
+        fi
+        break
+    done
     
-    echo -e "\n  ${GREEN}1.${NC} Xray-core\n  ${GREEN}2.${NC} Sing-box"
-    read -r -p "▶ 运行内核 [1-2, 默认 1, 0 取消]: " core_choice
-    core_choice="${core_choice// /}" # iPad空格剔除
-    if [ "$core_choice" == "0" ]; then return; fi; [ -z "$core_choice" ] && core_choice=1
+    # 【修复：内核选项错误重试机制】
+    while true; do
+        echo -e "\n  ${GREEN}1.${NC} Xray-core\n  ${GREEN}2.${NC} Sing-box"
+        read -r -p "▶ 运行内核 [1-2, 默认 1, 0 取消]: " core_choice
+        core_choice="${core_choice// /}"
+        if [ "$core_choice" == "0" ]; then return; fi; [ -z "$core_choice" ] && core_choice=1
+        
+        if [[ "$core_choice" != "1" && "$core_choice" != "2" ]]; then
+            echo -e "${RED}[错误] 输入无效，只能选择 1 或 2！请重新输入。${NC}"
+            continue
+        fi
+        break
+    done
     
     if ! confirm_action "开始部署 Hysteria2 节点并申请证书"; then pause_for_enter; return; fi
     install_dependencies
