@@ -3,7 +3,7 @@
 # =====================================================================
 # 项目名称: VPS Box (全能服务器优化与多节点部署工具箱)
 # 核心特性: 全局防冲突部署、智能复用证书、双内核自适应、系统管家
-# 版本: v2.1 (引入智能依赖检测 + 保持原版 UI 描述与自适应排版)
+# 版本: v1.8.2 (引入智能依赖检测 + 保持原版 UI 描述与自适应排版)
 # =====================================================================
 
 RED='\033[0;31m'
@@ -554,7 +554,7 @@ install_reality_node() {
     clear; print_divider; echo -e "       🌍 部署 VLESS-Reality (直连低延迟 / 强力防封锁)    "; print_divider
     echo -e "\n${YELLOW}【提醒】此模式抗封锁能力极强，但必须使用本机真实 IP 直连。${NC}\n"
     
-    # 【修复：端口错误重试机制】
+    # 【修复：端口防呆与重试】
     while true; do
         read -r -p "▶ 请输入监听端口 (默认 50000, 0 取消): " PORT
         PORT="${PORT// /}"
@@ -571,7 +571,7 @@ install_reality_node() {
         break
     done
     
-    # 【修复：内核选项错误重试机制】
+    # 【修复：内核选项防呆与重试】
     while true; do
         echo -e "\n  ${GREEN}1.${NC} Xray-core (经典稳定)\n  ${GREEN}2.${NC} Sing-box (轻量极速)"
         read -r -p "▶ 选择运行内核 [1-2, 默认 1, 0 取消]: " core_choice
@@ -585,6 +585,7 @@ install_reality_node() {
         break
     done
     
+    # 【核心修复：完美支持自定义 SNI】
     echo -e "\n  ${GREEN}1.${NC} gateway.icloud.com (苹果官网)\n  ${GREEN}2.${NC} www.microsoft.com (微软官网)"
     read -r -p "▶ 选择伪装 SNI [输入 1-2 选择，或直接输入自定义域名, 默认 1, 0 取消]: " sni_choice
     sni_choice="${sni_choice// /}"
@@ -634,7 +635,7 @@ install_ws_tls_node() {
     clear; print_divider; echo -e "       ☁️ 部署 VLESS-WS-TLS (套 CDN 优选 IP / 拯救被墙机器)    "; print_divider
     echo -e "\n${YELLOW}【提醒】此模式完美支持 Cloudflare，适合隐藏 IP 或复活机器。${NC}\n"
     
-    # 【修复：域名错误重试机制】
+    # 【修复：域名防呆与重试】
     while true; do
         read -r -p "▶ 请输入域名 (输入 0 取消): " DOMAIN
         DOMAIN="${DOMAIN// /}"
@@ -652,7 +653,7 @@ install_ws_tls_node() {
         break
     done
     
-    # 【修复：端口错误重试机制】
+    # 【修复：端口防呆与重试】
     while true; do
         read -r -p "▶ 监听端口 (默认 443, 0 取消): " WS_PORT
         WS_PORT="${WS_PORT// /}"
@@ -669,7 +670,7 @@ install_ws_tls_node() {
         break
     done
     
-    # 【修复：内核选项错误重试机制】
+    # 【修复：内核选项防呆与重试】
     while true; do
         echo -e "\n  ${GREEN}1.${NC} Xray-core\n  ${GREEN}2.${NC} Sing-box"
         read -r -p "▶ 运行内核 [1-2, 默认 1, 0 取消]: " core_choice
@@ -724,7 +725,7 @@ install_ws_tls_node() {
 install_hy2_node() {
     clear; print_divider; echo -e "       ⚡ 部署 Hysteria2 (暴力 UDP 发包 / 抢占高带宽)    "; print_divider
     
-    # 【修复：域名错误重试机制】
+    # 【修复：域名防呆与重试】
     while true; do
         read -r -p "▶ 请输入域名 (输入 0 取消): " DOMAIN
         DOMAIN="${DOMAIN// /}"
@@ -742,7 +743,7 @@ install_hy2_node() {
         break
     done
     
-    # 【修复：端口错误重试机制】
+    # 【修复：端口防呆与重试】
     while true; do
         read -r -p "▶ 监听端口 (默认 8443, 0 取消): " HY2_PORT
         HY2_PORT="${HY2_PORT// /}"
@@ -759,7 +760,7 @@ install_hy2_node() {
         break
     done
     
-    # 【修复：内核选项错误重试机制】
+    # 【修复：内核选项防呆与重试】
     while true; do
         echo -e "\n  ${GREEN}1.${NC} Xray-core\n  ${GREEN}2.${NC} Sing-box"
         read -r -p "▶ 运行内核 [1-2, 默认 1, 0 取消]: " core_choice
