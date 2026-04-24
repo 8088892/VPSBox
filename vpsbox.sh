@@ -379,7 +379,7 @@ EOF
                 echo -e "\n${CYAN}>>> 正在下载 XanMod 官方密钥 (增强防拦截模式)...${NC}"
                 
                 # 使用 curl 绕过 CDN 拦截并强制覆盖现有密钥，解决 gpg 数据无效报错
-                curl -fSsL https://dl.xanmod.org/archive.key | gpg --dearmor --yes -o /usr/share/keyrings/xanmod-archive-keyring.gpg
+                curl -fSsL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" https://dl.xanmod.org/archive.key | gpg --dearmor --yes -o /usr/share/keyrings/xanmod-archive-keyring.gpg 
                 
                 # 严格检查密钥文件是否下载成功（文件大小不为0）
                 if [ ! -s /usr/share/keyrings/xanmod-archive-keyring.gpg ]; then
