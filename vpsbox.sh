@@ -175,27 +175,76 @@ change_root_password() {
     pause_for_enter
 }
 
-setup_ssh_key() {
-    clear; print_divider; echo -e "       🛡️ 配置 SSH 密钥免密登录    "; print_divider
-    
+manage_ssh_security() {
     while true; do
-        read -r -p "▶ 请粘贴您的公钥 (通常以 ssh-rsa 开头, 输入 0 取消): " pub_key
-        if [ "$pub_key" == "0" ]; then return; fi
-        if [ -z "$pub_key" ]; then 
-            echo -e "${RED}[错误] 密钥内容不能为空，请重新输入！${NC}"
-            continue
-        fi
-        break
-    done
-    
-    if ! confirm_action "导入此 SSH 公钥"; then pause_for_enter; return; fi
+        clear; print_divider; echo -e "       🛡️ SSH 密钥与登录安全管理    "; print_divider
+        echo -e "  ${GREEN}1.${NC} 添加/覆盖 SSH 公钥"
+        echo -e "  ${GREEN}2.${NC} 删除所有 SSH 公钥"
+        echo -e "  ${GREEN}3.${NC} 禁用密码登录 (强制使用密钥)"
+        echo -e "  ${GREEN}4.${NC} 开启密码登录"
+        echo -e "  ${GREEN}0.${NC} 返回主菜单"
+        print_separator
+        echo ""
+        read -r -p "▶ 请选择操作 [0-4]: " ssh_opt
+        ssh_opt="${ssh_opt// /}"
+        
+        case $ssh_opt in
+            1)
+                while true; do
+                    read -r -p "▶ 请粘贴您的公钥 (通常以 ssh-rsa 开头, 输入 0 取消): " pub_key
+                    if [ "$pub_key" == "0" ]; then break; fi
+                    if [ -z "$pub_key" ]; then 
+                        echo -e "${RED}[错误] 密钥内容不能为空，请重新输入！${NC}"
+                        continue
+                    fi
+                    
+                    if ! confirm_action "导入此 SSH 公钥"; then break; fi
 
-    mkdir -p ~/.ssh
-    echo "$pub_key" >> ~/.ssh/authorized_keys
-    chmod 600 ~/.ssh/authorized_keys
-    chmod 700 ~/.ssh
-    echo -e "\n${GREEN}✅ 密钥已成功添加！请先测试使用密钥登录，再关闭密码登录功能。${NC}"
-    pause_for_enter
+                    mkdir -p ~/.ssh
+                    chmod 700 ~/.ssh
+
+                    if [ -s ~/.ssh/authorized_keys ]; then
+                        echo -e "\n${YELLOW}[发现] 系统中已存在其他 SSH 密钥记录。${NC}"
+                        read -r -p "▶ 是否清空旧密钥并覆盖？(y-覆盖清空 / n-保留追加, 默认 n): " overwrite_opt
+                        overwrite_opt="${overwrite_opt// /}"
+                        if [[ "$overwrite_opt" =~ ^[yY]$ ]]; then
+                            > ~/.ssh/authorized_keys
+                            echo -e "${CYAN}>>> 已清空历史废弃密钥。${NC}"
+                        fi
+                    fi
+
+                    echo "$pub_key" >> ~/.ssh/authorized_keys
+                    chmod 600 ~/.ssh/authorized_keys
+                    
+                    echo -e "\n${GREEN}✅ 密钥已成功添加！请先测试使用密钥登录，再关闭密码登录功能。${NC}"
+                    pause_for_enter
+                    break
+                done
+                ;;
+            2)
+                if ! confirm_action "删除系统中所有的 SSH 公钥"; then continue; fi
+                > ~/.ssh/authorized_keys
+                echo -e "\n${GREEN}✅ 所有 SSH 公钥已彻底清空！${NC}"
+                pause_for_enter
+                ;;
+            3)
+                if ! confirm_action "禁用密码登录 (⚠️ 请确保您已成功配置密钥)"; then continue; fi
+                sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication no/g' /etc/ssh/sshd_config
+                systemctl restart sshd
+                echo -e "\n${GREEN}✅ 密码登录已成功禁用！现在只能通过密钥连接服务器。${NC}"
+                pause_for_enter
+                ;;
+            4)
+                if ! confirm_action "开启密码登录"; then continue; fi
+                sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+                systemctl restart sshd
+                echo -e "\n${GREEN}✅ 密码登录已成功开启！${NC}"
+                pause_for_enter
+                ;;
+            0) return ;;
+            *) echo -e "\n${RED}输入无效！${NC}"; sleep 1 ;;
+        esac
+    done
 }
 
 change_ssh_port() {
@@ -348,10 +397,10 @@ get_bbr_status() {
 
 manage_bbr() {
     while true; do
-        clear; print_divider; echo -e "${PURPLE}                  🚀 BBR 拥塞控制智能管理中心${NC}"; print_divider
-        echo -e "  📊 当前内核版本 : ${YELLOW}$(uname -r)${NC}"
-        echo -e "  ⚡ 当前 BBR 状态: $(get_bbr_status)"
-        echo -e "  💡 说明: 使用业内最稳定的 XanMod 内核为您无缝安装纯正的 Google BBRv3。"
+        clear; print_divider; echo -e "${PURPLE}                  BBR 拥塞控制智能管理中心${NC}"; print_divider
+        echo -e "  当前内核版本 : ${YELLOW}$(uname -r)${NC}"
+        echo -e "  当前 BBR 状态: $(get_bbr_status)"
+        echo -e "  说明: 使用业内最稳定的 XanMod 内核为您无缝安装纯正的 Google BBRv3。"
         print_separator
         echo -e "  ${GREEN}1.${NC} 开启 BBRv1 (极速秒开 / 适合所有系统)"
         echo -e "  ${GREEN}2.${NC} 安装 BBRv3 (合入谷歌最新 V3 分支 / 延迟更低更激进)"
@@ -376,14 +425,15 @@ EOF
             2)
                 if ! command -v apt &> /dev/null; then echo -e "\n${RED}[错误] BBRv3 安装仅支持 Debian/Ubuntu。${NC}"; sleep 2; continue; fi
                 if ! confirm_action "安装 BBRv3 内核"; then continue; fi
-                echo -e "\n${CYAN}>>> 正在下载 XanMod 官方密钥 (增强防拦截模式)...${NC}"
+                echo -e "\n${CYAN}>>> 正在连接 Ubuntu 官方服务器获取 XanMod 密钥 (防拦截模式)...${NC}"
                 
-                # 使用 curl 绕过 CDN 拦截并强制覆盖现有密钥，解决 gpg 数据无效报错
-                curl -fSsL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" https://dl.xanmod.org/archive.key | gpg --dearmor --yes -o /usr/share/keyrings/xanmod-archive-keyring.gpg 
+                # 直接从 Ubuntu 官方密钥服务器拉取 XanMod 的数字签名公钥，彻底绕过 Cloudflare 拦截
+                gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 86F7D09EE734E623 > /dev/null 2>&1
+                gpg --export 86F7D09EE734E623 > /usr/share/keyrings/xanmod-archive-keyring.gpg
                 
                 # 严格检查密钥文件是否下载成功（文件大小不为0）
                 if [ ! -s /usr/share/keyrings/xanmod-archive-keyring.gpg ]; then
-                    echo -e "\n${RED}[错误] 密钥下载失败！文件为空，可能是 CDN 暂时拦截，请重试。${NC}"
+                    echo -e "\n${RED}[错误] 密钥获取失败！请检查网络或稍后重试。${NC}"
                     rm -f /usr/share/keyrings/xanmod-archive-keyring.gpg
                     sleep 3; continue
                 fi
@@ -443,7 +493,7 @@ EOF
 }
 
 apply_tuning() {
-    clear; print_divider; echo -e "       ⚙️ 动态 TCP 自动调优注入 (VPSBox 核心)    "; print_divider
+    clear; print_divider; echo -e "       动态 TCP 自动调优注入 (VPSBox 核心)    "; print_divider
     echo -e "${YELLOW}【模式说明】${NC}"
     echo -e "  ${GREEN}1. 正常模式${NC}: 科学稳健，结合你的带宽和延迟智能计算 BDP，适合日常建站、常规代理。"
     echo -e "  ${RED}2. 激进模式${NC}: Beta特性，无视慢启动，极致压榨带宽，高并发利器。${YELLOW}(警告：可能增加丢包率与内存消耗)${NC}"
@@ -1518,18 +1568,18 @@ while true; do
     clear
     echo ""
     print_divider
-    echo -e "${PURPLE}           🌟 VPS Box 全能服务器管家与部署工具箱 v2.5.0 🌟${NC}"
+    echo -e "${PURPLE}           VPS Box 全能服务器管家与部署工具箱 v2.5.0 ${NC}"
     print_divider
     
     echo -e "  公网 IP  : ${YELLOW}${SERVER_IP} ${CYAN}[${IP_FORMAT}]${NC}"
     echo -e "  硬件规格 : ${YELLOW}${HW_PROFILE}${NC}"
     echo -e "  系统时区 : ${YELLOW}${CURRENT_TZ}${NC}"
-    echo -e "  ⚡ BBR 状态 : $(get_bbr_status)"
+    echo -e "  BBR 状态 : $(get_bbr_status)"
     print_separator
     
     echo -e "  ${CYAN}【基础系统管理与安全防护】${NC}"
     echo -e "  ${GREEN}1.${NC} 更新系统并安装必备组件        ${GREEN}2.${NC} 系统垃圾与废弃依赖清理"
-    echo -e "  ${GREEN}3.${NC} 修改系统 root 密码            ${GREEN}4.${NC} 配置 SSH 密钥免密登录"
+    echo -e "  ${GREEN}3.${NC} 修改系统 root 密码            ${GREEN}4.${NC} SSH 密钥与登录安全管理"
     echo -e "  ${GREEN}5.${NC} 修改系统主机名 (Hostname)     ${GREEN}6.${NC} 修改时区为 [北京时间]"
     echo -e "  ${GREEN}7.${NC} 虚拟内存 (Swap) 一键管理      ${GREEN}8.${NC} 系统 DNS 极速优化"
     echo -e "  ${GREEN}9.${NC} 修改 SSH 默认登录端口"
@@ -1563,7 +1613,7 @@ while true; do
         1) system_update ;;
         2) system_clean ;;
         3) change_root_password ;;
-        4) setup_ssh_key ;;
+        4) manage_ssh_security ;;
         5) change_hostname ;;
         6) set_china_timezone ;;
         7) manage_swap ;;
