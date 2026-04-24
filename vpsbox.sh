@@ -3,7 +3,7 @@
 # =====================================================================
 # 项目名称: VPS Box (全能服务器优化与多节点部署工具箱)
 # 核心特性: 全局防冲突部署、智能复用证书、双内核自适应、系统管家
-# 版本: v2.2.0 (终极修复版：含备份/二维码/防失联/一键更新)
+# 版本: v2.3.0 (极致极简版：事前配置校验 + 紧凑二维码 + 完美 Hy2 支持)
 # =====================================================================
 
 RED='\033[0;31m'
@@ -570,8 +570,8 @@ view_deployed_nodes() {
             local target_link=$(echo "${links[$((vn_opt-1))]}" | awk -F' \\| ' '{print $3}')
             echo -e "\n${CYAN}>>> 节点分享链接：${NC}"
             echo -e "${target_link}\n"
-            echo -e "${YELLOW}>>> 节点二维码 (支持绝大多数客户端扫码)：${NC}"
-            qrencode -t ANSIUTF8 "$target_link"
+            echo -e "${YELLOW}>>> 节点二维码 (紧凑版，长内容自动换行无影响)：${NC}"
+            qrencode -t UTF8 -m 1 "$target_link"
             pause_for_enter
             
         # 2. 备份节点配置
@@ -704,32 +704,51 @@ delete_node() {
     pause_for_enter
 }
 
-# --- 节点部署核心引擎 ---
+# --- 节点部署核心引擎 (引入事前校验，失败绝不落盘) ---
 append_inbound() {
     local CONFIG_FILE=$1
     local NEW_INBOUND=$2
     local TARGET_PORT=$3
     local CORE_NAME=$4
+    local TMP_FILE="/tmp/vpsbox_test_config.json"
     
     if [ -f "$CONFIG_FILE" ] && grep -q "inbounds" "$CONFIG_FILE"; then
-        echo -e "${YELLOW}[系统] 检测到已有配置，执行安全追加...${NC}"
+        echo -e "${YELLOW}[系统] 检测到已有配置，正在生成并验证测试配置...${NC}"
         if [ "$CORE_NAME" == "Sing-box" ]; then
-            jq --argjson new_in "$NEW_INBOUND" --argjson port "$TARGET_PORT" 'del(.inbounds[] | select(.listen_port == $port)) | .inbounds += [$new_in]' "$CONFIG_FILE" > /tmp/v2_tmp.json
+            jq --argjson new_in "$NEW_INBOUND" --argjson port "$TARGET_PORT" 'del(.inbounds[] | select(.listen_port == $port)) | .inbounds += [$new_in]' "$CONFIG_FILE" > "$TMP_FILE"
         else
-            jq --argjson new_in "$NEW_INBOUND" --argjson port "$TARGET_PORT" 'del(.inbounds[] | select(.port == $port)) | .inbounds += [$new_in]' "$CONFIG_FILE" > /tmp/v2_tmp.json
+            jq --argjson new_in "$NEW_INBOUND" --argjson port "$TARGET_PORT" 'del(.inbounds[] | select(.port == $port)) | .inbounds += [$new_in]' "$CONFIG_FILE" > "$TMP_FILE"
         fi
-        mv /tmp/v2_tmp.json "$CONFIG_FILE"
     else
-        echo -e "${YELLOW}[系统] 首次部署，正在初始化配置文件...${NC}"
+        echo -e "${YELLOW}[系统] 首次部署，正在初始化并验证配置文件...${NC}"
         if [ "$CORE_NAME" == "Sing-box" ]; then
-            cat > "$CONFIG_FILE" <<EOF
+            cat > "$TMP_FILE" <<EOF
 {"inbounds":[$NEW_INBOUND],"outbounds":[{"type":"direct"}]}
 EOF
         else
-            cat > "$CONFIG_FILE" <<EOF
+            cat > "$TMP_FILE" <<EOF
 {"inbounds":[$NEW_INBOUND],"outbounds":[{"protocol":"freedom"}]}
 EOF
         fi
+    fi
+
+    # 事前校验核心逻辑：调用内核验证我们生成的 JSON 是否合法
+    local TEST_PASS=0
+    if [ "$CORE_NAME" == "Sing-box" ]; then
+        local SB_BIN=$(command -v sing-box || echo "/usr/local/bin/sing-box")
+        if "$SB_BIN" check -c "$TMP_FILE" >/dev/null 2>&1; then TEST_PASS=1; fi
+    else
+        local X_BIN=$(command -v xray || echo "/usr/local/bin/xray")
+        if "$X_BIN" run -test -conf "$TMP_FILE" >/dev/null 2>&1; then TEST_PASS=1; fi
+    fi
+
+    # 校验通过才真正覆写底层配置
+    if [ "$TEST_PASS" -eq 1 ]; then
+        mv "$TMP_FILE" "$CONFIG_FILE"
+        return 0
+    else
+        rm -f "$TMP_FILE"
+        return 1
     fi
 }
 
@@ -790,16 +809,24 @@ install_reality_node() {
         hash -r; X_BIN=$(command -v xray || echo "/usr/local/bin/xray"); KEYS=$("$X_BIN" x25519)
         PRI=$(echo "$KEYS" | awk -F'[: ]+' '/Private/{print $NF}'); PUB=$(echo "$KEYS" | awk -F'[: ]+' '/Public/{print $NF}')
         NEW_INBOUND='{"port":'$PORT',"protocol":"vless","settings":{"clients":[{"id":"'$UUID'","flow":"xtls-rprx-vision"}],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"dest":"'$SNI_DOMAIN':443","serverNames":["'$SNI_DOMAIN'"],"privateKey":"'$PRI'","shortIds":["'$SHORT_ID'"]}}}'
-        append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$PORT" "Xray"
-        systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray)
+        
+        if append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$PORT" "Xray"; then
+            systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray)
+        else
+            SERVICE_STATUS="config_error"
+        fi
     else
         CORE_NAME="Sing-box"
         bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1
         hash -r; SB_BIN=$(command -v sing-box || echo "/usr/local/bin/sing-box"); KEYS=$("$SB_BIN" generate reality-keypair)
         PRI=$(echo "$KEYS" | awk -F'[: ]+' '/Private/{print $NF}'); PUB=$(echo "$KEYS" | awk -F'[: ]+' '/Public/{print $NF}')
         NEW_INBOUND='{"type":"vless","listen":"::","listen_port":'$PORT',"users":[{"uuid":"'$UUID'","flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":"'$SNI_DOMAIN'","reality":{"enabled":true,"handshake":{"server":"'$SNI_DOMAIN'","server_port":443},"private_key":"'$PRI'","short_id":["'$SHORT_ID'"]}}}'
-        append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$PORT" "Sing-box"
-        systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box)
+        
+        if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$PORT" "Sing-box"; then
+            systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box)
+        else
+            SERVICE_STATUS="config_error"
+        fi
     fi
     
     if [ "$SERVICE_STATUS" == "active" ]; then
@@ -807,10 +834,10 @@ install_reality_node() {
         LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI_DOMAIN}&fp=chrome&pbk=${PUB}&sid=${SHORT_ID}&type=tcp#${CORE_NAME}-Reality"
         echo -e "${CYAN}${LINK}${NC}\n"
         echo -e "${YELLOW}>>> 扫描下方二维码快速导入节点：${NC}"
-        qrencode -t ANSIUTF8 "$LINK"
+        qrencode -t UTF8 -m 1 "$LINK"
         echo "${CORE_NAME}-Reality | 端口:${PORT} | ${LINK}" >> "$NODE_RECORD_FILE"
     else
-        echo -e "\n${RED}[错误] 启动失败，请检查端口冲突。${NC}"
+        echo -e "\n${RED}[错误] 配置文件检测失败或内核拒绝启动，部署已自动终止，未留下任何垃圾配置！${NC}"
     fi
     pause_for_enter
 }
@@ -944,14 +971,22 @@ install_ws_tls_node() {
         CORE_NAME="Xray"
         NEW_INBOUND='{"port":'$WS_PORT',"protocol":"vless","settings":{"clients":[{"id":"'$UUID'"}],"decryption":"none"},"streamSettings":{"network":"ws","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"'$CERT_DIR'/fullchain.pem","keyFile":"'$CERT_DIR'/privkey.pem"}]},"wsSettings":{"path":"'$WSPATH'"}}}'
         bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1
-        append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$WS_PORT" "Xray"
-        systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray)
+        
+        if append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$WS_PORT" "Xray"; then
+            systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray)
+        else
+            SERVICE_STATUS="config_error"
+        fi
     else
         CORE_NAME="Sing-box"
         NEW_INBOUND='{"type":"vless","listen":"::","listen_port":'$WS_PORT',"users":[{"uuid":"'$UUID'"}],"tls":{"enabled":true,"server_name":"'$DOMAIN'","certificate_path":"'$CERT_DIR'/fullchain.pem","key_path":"'$CERT_DIR'/privkey.pem"},"transport":{"type":"ws","path":"'$WSPATH'"}}'
         bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1
-        append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$WS_PORT" "Sing-box"
-        systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box)
+        
+        if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$WS_PORT" "Sing-box"; then
+            systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box)
+        else
+            SERVICE_STATUS="config_error"
+        fi
     fi
     
     if [ "$SERVICE_STATUS" == "active" ]; then
@@ -959,10 +994,10 @@ install_ws_tls_node() {
         LINK="vless://${UUID}@${DOMAIN}:${WS_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${WSPATH}#${CORE_NAME}-WS-TLS"
         echo -e "${CYAN}${LINK}${NC}\n"
         echo -e "${YELLOW}>>> 扫描下方二维码快速导入节点：${NC}"
-        qrencode -t ANSIUTF8 "$LINK"
+        qrencode -t UTF8 -m 1 "$LINK"
         echo "${CORE_NAME}-WS-TLS | 端口:${WS_PORT} | ${LINK}" >> "$NODE_RECORD_FILE"
     else
-        echo -e "\n${RED}[错误] 启动失败，请检查端口冲突。${NC}"
+        echo -e "\n${RED}[错误] 配置文件检测失败或内核拒绝启动，部署已自动终止，未留下任何垃圾配置！${NC}"
     fi
     pause_for_enter
 }
@@ -1093,16 +1128,25 @@ install_hy2_node() {
     
     if [ "$core_choice" == "1" ]; then
         CORE_NAME="Xray"
-        NEW_INBOUND='{"port":'$HY2_PORT',"protocol":"hysteria","settings":{"clients":[{"auth":"'$HY2_PASS'"}]},"streamSettings":{"network":"hysteria","security":"tls","hysteriaSettings":{"version":2,"congestion":{"ignoreClientBandwidth":false}},"tlsSettings":{"serverName":"'$DOMAIN'","alpn":["h3"],"certificates":[{"certificateFile":"'$CERT_DIR'/fullchain.pem","keyFile":"'$CERT_DIR'/privkey.pem"}]}}}'
+        # 完美适配官方 Xray Hy2 JSON 规范
+        NEW_INBOUND='{"port":'$HY2_PORT',"protocol":"hysteria","settings":{"version":2,"clients":[{"auth":"'$HY2_PASS'","email":"user@vpsbox"}]},"streamSettings":{"network":"hysteria","security":"tls","tlsSettings":{"alpn":["h3"],"minVersion":"1.3","certificates":[{"certificateFile":"'$CERT_DIR'/fullchain.pem","keyFile":"'$CERT_DIR'/privkey.pem"}]},"hysteriaSettings":{"version":2,"auth":"'$HY2_PASS'","udpIdleTimeout":60}}}'
         bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1
-        append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$HY2_PORT" "Xray"
-        systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray)
+        
+        if append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$HY2_PORT" "Xray"; then
+            systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray)
+        else
+            SERVICE_STATUS="config_error"
+        fi
     else
         CORE_NAME="Sing-box"
         NEW_INBOUND='{"type":"hysteria2","listen":"::","listen_port":'$HY2_PORT',"users":[{"password":"'$HY2_PASS'"}],"tls":{"enabled":true,"server_name":"'$DOMAIN'","certificate_path":"'$CERT_DIR'/fullchain.pem","key_path":"'$CERT_DIR'/privkey.pem"}}'
         bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1
-        append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$HY2_PORT" "Sing-box"
-        systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box)
+        
+        if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$HY2_PORT" "Sing-box"; then
+            systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box)
+        else
+            SERVICE_STATUS="config_error"
+        fi
     fi
     
     if [ "$SERVICE_STATUS" == "active" ]; then
@@ -1110,10 +1154,10 @@ install_hy2_node() {
         LINK="hy2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}?sni=${DOMAIN}&insecure=0#${CORE_NAME}-Hys2"
         echo -e "${CYAN}${LINK}${NC}\n"
         echo -e "${YELLOW}>>> 扫描下方二维码快速导入节点：${NC}"
-        qrencode -t ANSIUTF8 "$LINK"
+        qrencode -t UTF8 -m 1 "$LINK"
         echo "${CORE_NAME}-Hys2 | 端口:${HY2_PORT} | ${LINK}" >> "$NODE_RECORD_FILE"
     else
-        echo -e "\n${RED}[错误] 启动失败，请检查端口冲突。${NC}"
+        echo -e "\n${RED}[错误] 配置文件检测失败或内核拒绝启动，部署已自动终止，未留下任何垃圾配置！${NC}"
     fi
     pause_for_enter
 }
@@ -1255,7 +1299,7 @@ while true; do
     clear
     echo ""
     print_divider
-    echo -e "${PURPLE}           🌟 VPS Box 全能服务器管家与部署工具箱 v2.2.0 🌟${NC}"
+    echo -e "${PURPLE}           🌟 VPS Box 全能服务器管家与部署工具箱 v2.3.0 🌟${NC}"
     print_divider
     
     # 顶部基础信息 (无图标)
