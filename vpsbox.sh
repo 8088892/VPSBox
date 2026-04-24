@@ -337,7 +337,7 @@ get_bbr_status() {
     local cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
     if [[ "$cc" == "bbr" ]]; then
         if uname -r | grep -qi "xanmod"; then 
-            echo -e "${PURPLE}BBRv3 (基于 Google 官方源码)${NC}"
+            echo -e "${YELLOW}BBRv3 (基于 Google 官方源码)${NC}"
         else 
             echo -e "${GREEN}BBRv1 (Linux 系统原生)${NC}"
         fi
