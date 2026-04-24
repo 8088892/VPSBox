@@ -3,7 +3,7 @@
 # =====================================================================
 # 项目名称: VPS Box (全能服务器优化与多节点部署工具箱)
 # 核心特性: 全局防冲突部署、智能复用证书、双内核自适应、系统管家
-# 版本: v2.1.0 (安全修复与节点备份增强版)
+# 版本: v2.2.0 (终极修复版：含备份/二维码/防失联/一键更新)
 # =====================================================================
 
 RED='\033[0;31m'
@@ -1209,8 +1209,30 @@ manage_ufw() {
 }
 
 # =========================================================
-#                       卸载模块
+#                       附加维护模块
 # =========================================================
+
+update_script() {
+    clear; print_divider; echo -e "       🔄 一键更新 VPSBox 脚本自身    "; print_divider
+    if ! confirm_action "从 GitHub 拉取最新版 VPSBox 并覆盖当前脚本"; then pause_for_enter; return; fi
+
+    echo -e "\n${CYAN}>>> 正在连接 GitHub 下载最新版本...${NC}"
+    curl -sL "https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh" -o /tmp/vpsbox_update.sh
+
+    # 防呆检测：确保下载下来的文件包含我们需要的标识，防止被空文件覆盖
+    if [ -f /tmp/vpsbox_update.sh ] && grep -q "VPSBox" /tmp/vpsbox_update.sh; then
+        mv /tmp/vpsbox_update.sh "$SHORTCUT_PATH"
+        chmod +x "$SHORTCUT_PATH"
+        echo -e "\n${GREEN}✅ VPSBox 已成功更新到最新版本！即将自动重启脚本...${NC}"
+        sleep 2
+        # 使用新版本替换当前进程
+        exec "$SHORTCUT_PATH"
+    else
+        echo -e "\n${RED}[错误] 下载失败或获取到的文件异常，原脚本未作更改，请稍后重试。${NC}"
+        rm -f /tmp/vpsbox_update.sh
+        pause_for_enter
+    fi
+}
 
 uninstall_vpsbox() {
     print_separator
@@ -1233,7 +1255,7 @@ while true; do
     clear
     echo ""
     print_divider
-    echo -e "${PURPLE}           🌟 VPS Box 全能服务器管家与部署工具箱 v2.1.0 🌟${NC}"
+    echo -e "${PURPLE}           🌟 VPS Box 全能服务器管家与部署工具箱 v2.2.0 🌟${NC}"
     print_divider
     
     # 顶部基础信息 (无图标)
@@ -1264,13 +1286,14 @@ while true; do
     echo -e "\n  ${CYAN}【附加实用工具与安全拓展】${NC}"
     echo -e "  ${GREEN}19.${NC} Cloudflare WARP 一键解锁      ${YELLOW}(获取干净 IP / 规避验证码)${NC}"
     echo -e "  ${GREEN}20.${NC} UFW 防火墙简单端口管理        ${YELLOW}(防呆管理 / 一键放行端口)${NC}"
+    echo -e "  ${GREEN}21.${NC} 🔄 一键更新 VPSBox 脚本自身"
     echo -e "  ${RED}99.${NC} 彻底卸载 VPSBox 及系统残留"
 
     print_separator
     echo -e "  ${GREEN}0.${NC} 安全退出"
     print_divider
     echo ""
-    read -r -p "▶ 请输入选择 [0-20, 99]: " OPTION
+    read -r -p "▶ 请输入选择 [0-21, 99]: " OPTION
     OPTION="${OPTION// /}" 
     
     case $OPTION in
@@ -1294,6 +1317,7 @@ while true; do
         18) delete_node ;;
         19) install_warp ;;
         20) manage_ufw ;;
+        21) update_script ;;
         99) uninstall_vpsbox ;;
         0) echo -e "\n${GREEN}[感谢使用] 正在退出...${NC}\n"; exit 0 ;;
         *) echo -e "\n${RED}[提示] 编号不存在！${NC}"; sleep 1 ;;
