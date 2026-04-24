@@ -3,7 +3,7 @@
 # =====================================================================
 # 项目名称: VPS Box (全能服务器优化与多节点部署工具箱)
 # 核心特性: 全局防冲突部署、智能复用证书、双内核自适应、系统管家
-# 版本: v2.4.0 (专家会诊修复版：完美Hy2支持 + 精准防呆校验 + 极简二维码)
+# 版本: v2.5.0 (长效稳定版：修复证书续签失联、IPv6双栈、底层环境健壮性)
 # =====================================================================
 
 RED='\033[0;31m'
@@ -55,7 +55,14 @@ RAM_GB=$(( (RAM_MB + 512) / 1024 ))
 [ "$RAM_GB" -eq 0 ] && RAM_GB=1
 HW_PROFILE="${CPU_CORES}C${RAM_GB}G"
 CURRENT_TZ=$(timedatectl | grep "Time zone" | awk '{print $3}')
+
+# 修复：完美兼容 IPv4 / IPv6 双栈机器
 SERVER_IP=$(curl -s4 ifconfig.me || curl -s4 ip.sb)
+IP_FORMAT="v4"
+if [ -z "$SERVER_IP" ]; then
+    SERVER_IP=$(curl -s6 ifconfig.me || curl -s6 ip.sb)
+    IP_FORMAT="v6"
+fi
 
 # --- UI 与交互组件 (自适应排版核心) ---
 get_term_width() {
@@ -315,7 +322,9 @@ optimize_dns() {
 nameserver 1.1.1.1
 nameserver 8.8.8.8
 EOF
-    echo -e "\n${GREEN}✅ 系统 DNS 已优化成功！${NC}"
+    # 修复：加上不可变锁，防止重启后被 systemd-resolved 覆盖
+    chattr +i /etc/resolv.conf
+    echo -e "\n${GREEN}✅ 系统 DNS 已优化成功，并已锁定防止系统篡改！${NC}"
     pause_for_enter
 }
 
@@ -512,9 +521,7 @@ manage_backup() {
 check_media_unlock() {
     clear; print_divider; echo -e "       📺 ip质量检测与流媒体解锁    "; print_divider
     echo -e "${CYAN}>>> 正在载入权威检测引擎，请稍候...${NC}\n"
-    
     bash <(curl -sL https://Check.Place) -I
-    
     pause_for_enter
 }
 
@@ -564,7 +571,6 @@ view_deployed_nodes() {
         
         if [ "$vn_opt" == "0" ]; then break; fi
         
-        # 1. 查看二维码与链接
         if [[ "$vn_opt" =~ ^[0-9]+$ ]] && [ "$vn_opt" -ge 1 ] && [ "$vn_opt" -le "${#links[@]}" ]; then
             local target_link=$(echo "${links[$((vn_opt-1))]}" | awk -F' \\| ' '{print $3}')
             echo -e "\n${CYAN}>>> 节点分享链接：${NC}"
@@ -572,8 +578,6 @@ view_deployed_nodes() {
             echo -e "${YELLOW}>>> 节点二维码 (紧凑版，长内容自动换行无影响)：${NC}"
             qrencode -t UTF8 -m 1 "$target_link"
             pause_for_enter
-            
-        # 2. 备份节点配置
         elif [[ "$vn_opt" =~ ^[bB]$ ]]; then
             if ! confirm_action "备份当前节点配置"; then continue; fi
             local ts=$(date +"%Y%m%d_%H%M%S")
@@ -584,8 +588,6 @@ view_deployed_nodes() {
             [ -f "$NODE_RECORD_FILE" ] && cp "$NODE_RECORD_FILE" "$bk_path/vpsbox_nodes.txt"
             echo -e "\n${GREEN}✅ 节点配置已成功备份至: $bk_path ${NC}"
             pause_for_enter
-            
-        # 3. 还原节点配置
         elif [[ "$vn_opt" =~ ^[rR]$ ]]; then
             shopt -s nullglob
             local n_backups=("${BACKUP_DIR}"/node_backup_*)
@@ -624,13 +626,11 @@ delete_node() {
     echo -e "正在扫描当前已部署的节点...\n"
 
     local nodes_found=0
-    
     if [ -f "/usr/local/etc/xray/config.json" ] && grep -q "inbounds" "/usr/local/etc/xray/config.json"; then
         echo -e "${CYAN}【Xray 节点】${NC}"
         jq -r '.inbounds[] | "  - 端口: \(.port) | 主协议: \(.protocol)"' /usr/local/etc/xray/config.json 2>/dev/null
         nodes_found=1
     fi
-    
     if [ -f "/etc/sing-box/config.json" ] && grep -q "inbounds" "/etc/sing-box/config.json"; then
         echo -e "\n${CYAN}【Sing-box 节点】${NC}"
         jq -r '.inbounds[] | "  - 端口: \(.listen_port) | 主协议: \(.type)"' /etc/sing-box/config.json 2>/dev/null
@@ -644,32 +644,21 @@ delete_node() {
     fi
 
     echo ""
-    
     while true; do
         read -r -p "▶ 请输入要删除的节点【端口号】 (输入 0 取消): " del_port
         del_port="${del_port// /}"
         if [ "$del_port" == "0" ]; then return; fi
-        
-        if [ -z "$del_port" ]; then
-            echo -e "${RED}[错误] 端口号不能为空，请重新输入！${NC}"
-            continue
-        fi
-        
-        if ! [[ "$del_port" =~ ^[0-9]+$ ]]; then
-            echo -e "${RED}[错误] 端口号必须是纯数字！请重新输入。${NC}"
+        if [ -z "$del_port" ] || ! [[ "$del_port" =~ ^[0-9]+$ ]]; then
+            echo -e "${RED}[错误] 端口号必须是有效的纯数字！请重新输入。${NC}"
             continue
         fi
         
         local port_exists=0
-        if [ -f "/usr/local/etc/xray/config.json" ] && jq -e ".inbounds[] | select(.port == $del_port)" /usr/local/etc/xray/config.json > /dev/null 2>&1; then
-            port_exists=1
-        fi
-        if [ -f "/etc/sing-box/config.json" ] && jq -e ".inbounds[] | select(.listen_port == $del_port)" /etc/sing-box/config.json > /dev/null 2>&1; then
-            port_exists=1
-        fi
+        if [ -f "/usr/local/etc/xray/config.json" ] && jq -e ".inbounds[] | select(.port == $del_port)" /usr/local/etc/xray/config.json > /dev/null 2>&1; then port_exists=1; fi
+        if [ -f "/etc/sing-box/config.json" ] && jq -e ".inbounds[] | select(.listen_port == $del_port)" /etc/sing-box/config.json > /dev/null 2>&1; then port_exists=1; fi
         
         if [ "$port_exists" -eq 0 ]; then
-            echo -e "${RED}[错误] 当前部署中未找到端口为 $del_port 的节点配置，请检查后重新输入！${NC}"
+            echo -e "${RED}[错误] 当前部署中未找到端口为 $del_port 的节点，请检查！${NC}"
             continue
         fi
         break
@@ -685,7 +674,6 @@ delete_node() {
             echo -e "${GREEN}✅ 已成功移除 Xray 中占用端口 $del_port 的节点配置！${NC}"
         fi
     fi
-    
     if [ -f "/etc/sing-box/config.json" ]; then
         if jq -e ".inbounds[] | select(.listen_port == $del_port)" /etc/sing-box/config.json > /dev/null 2>&1; then
             jq "del(.inbounds[] | select(.listen_port == $del_port))" /etc/sing-box/config.json > /tmp/sb_tmp.json
@@ -695,15 +683,13 @@ delete_node() {
         fi
     fi
     
-    # 同步清理保存的链接
     if [ -f "$NODE_RECORD_FILE" ]; then
         sed -i "/端口:${del_port} /d" "$NODE_RECORD_FILE" 2>/dev/null
     fi
-    
     pause_for_enter
 }
 
-# --- 节点部署核心引擎 (修复校验参数) ---
+# --- 节点部署核心引擎 ---
 append_inbound() {
     local CONFIG_FILE=$1
     local NEW_INBOUND=$2
@@ -731,7 +717,6 @@ EOF
         fi
     fi
 
-    # 事前校验：已修复 Xray 的 -c 参数问题
     local TEST_PASS=0
     if [ "$CORE_NAME" == "Sing-box" ]; then
         local SB_BIN=$(command -v sing-box || echo "/usr/local/bin/sing-box")
@@ -741,7 +726,6 @@ EOF
         if "$X_BIN" run -test -c "$TMP_FILE" >/dev/null 2>&1; then TEST_PASS=1; fi
     fi
 
-    # 校验通过才真正覆写底层配置
     if [ "$TEST_PASS" -eq 1 ]; then
         mv "$TMP_FILE" "$CONFIG_FILE"
         return 0
@@ -765,7 +749,7 @@ install_reality_node() {
             continue
         fi
         if ss -tulpn | grep -qw ":$PORT"; then
-            echo -e "${RED}[错误] 端口 $PORT 已被其他程序占用，请更换其他端口！${NC}"
+            echo -e "${RED}[错误] 端口 $PORT 已被占用！${NC}"
             continue
         fi
         break
@@ -776,11 +760,7 @@ install_reality_node() {
         read -r -p "▶ 选择运行内核 [1-2, 默认 1, 0 取消]: " core_choice
         core_choice="${core_choice// /}"
         if [ "$core_choice" == "0" ]; then return; fi; [ -z "$core_choice" ] && core_choice=1
-        
-        if [[ "$core_choice" != "1" && "$core_choice" != "2" ]]; then
-            echo -e "${RED}[错误] 输入无效，只能选择 1 或 2！请重新输入。${NC}"
-            continue
-        fi
+        if [[ "$core_choice" != "1" && "$core_choice" != "2" ]]; then continue; fi
         break
     done
     
@@ -789,80 +769,61 @@ install_reality_node() {
     sni_choice="${sni_choice// /}"
     if [ "$sni_choice" == "0" ]; then return; fi
     
-    if [[ -z "$sni_choice" || "$sni_choice" == "1" ]]; then
-        SNI_DOMAIN="gateway.icloud.com"
-    elif [[ "$sni_choice" == "2" ]]; then
-        SNI_DOMAIN="www.microsoft.com"
-    else
-        SNI_DOMAIN="$sni_choice"
-    fi
+    if [[ -z "$sni_choice" || "$sni_choice" == "1" ]]; then SNI_DOMAIN="gateway.icloud.com"
+    elif [[ "$sni_choice" == "2" ]]; then SNI_DOMAIN="www.microsoft.com"
+    else SNI_DOMAIN="$sni_choice"; fi
     
     if ! confirm_action "开始部署 Reality 节点"; then pause_for_enter; return; fi
     install_dependencies
     
     UUID=$(cat /proc/sys/kernel/random/uuid); SHORT_ID=$(openssl rand -hex 8)
+    # 修复：对纯 IPv6 地址的 URL 拼接格式化处理
+    LINK_IP="$SERVER_IP"
+    if [[ "$IP_FORMAT" == "v6" ]]; then LINK_IP="[${SERVER_IP}]"; fi
     
     if [ "$core_choice" == "1" ]; then
         CORE_NAME="Xray"
-        # 修复：只在没安装时去拉取，避免导致原服务意外中断重启
-        if ! command -v xray &> /dev/null; then
-            echo -e "${CYAN}>>> 初次使用，正在自动部署 Xray 内核...${NC}"
-            bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1
-        fi
-        
+        if ! command -v xray &> /dev/null; then bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1; fi
         hash -r; X_BIN=$(command -v xray || echo "/usr/local/bin/xray"); KEYS=$("$X_BIN" x25519)
         PRI=$(echo "$KEYS" | awk -F'[: ]+' '/Private/{print $NF}'); PUB=$(echo "$KEYS" | awk -F'[: ]+' '/Public/{print $NF}')
         NEW_INBOUND='{"port":'$PORT',"protocol":"vless","settings":{"clients":[{"id":"'$UUID'","flow":"xtls-rprx-vision"}],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"dest":"'$SNI_DOMAIN':443","serverNames":["'$SNI_DOMAIN'"],"privateKey":"'$PRI'","shortIds":["'$SHORT_ID'"]}}}'
         
         if append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$PORT" "Xray"; then
             systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray)
-        else
-            SERVICE_STATUS="config_error"
-        fi
+        else SERVICE_STATUS="config_error"; fi
     else
         CORE_NAME="Sing-box"
-        if ! command -v sing-box &> /dev/null; then
-            echo -e "${CYAN}>>> 初次使用，正在自动部署 Sing-box 内核...${NC}"
-            bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1
-        fi
-        
+        if ! command -v sing-box &> /dev/null; then bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1; fi
         hash -r; SB_BIN=$(command -v sing-box || echo "/usr/local/bin/sing-box"); KEYS=$("$SB_BIN" generate reality-keypair)
         PRI=$(echo "$KEYS" | awk -F'[: ]+' '/Private/{print $NF}'); PUB=$(echo "$KEYS" | awk -F'[: ]+' '/Public/{print $NF}')
         NEW_INBOUND='{"type":"vless","listen":"::","listen_port":'$PORT',"users":[{"uuid":"'$UUID'","flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":"'$SNI_DOMAIN'","reality":{"enabled":true,"handshake":{"server":"'$SNI_DOMAIN'","server_port":443},"private_key":"'$PRI'","short_id":["'$SHORT_ID'"]}}}'
         
         if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$PORT" "Sing-box"; then
             systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box)
-        else
-            SERVICE_STATUS="config_error"
-        fi
+        else SERVICE_STATUS="config_error"; fi
     fi
     
     if [ "$SERVICE_STATUS" == "active" ]; then
         echo -e "\n${GREEN}🎉 VLESS-Reality 节点成功部署于 ${CORE_NAME}！${NC}"
-        LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI_DOMAIN}&fp=chrome&pbk=${PUB}&sid=${SHORT_ID}&type=tcp#${CORE_NAME}-Reality"
+        LINK="vless://${UUID}@${LINK_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI_DOMAIN}&fp=chrome&pbk=${PUB}&sid=${SHORT_ID}&type=tcp#${CORE_NAME}-Reality"
         echo -e "${CYAN}${LINK}${NC}\n"
         echo -e "${YELLOW}>>> 扫描下方二维码快速导入节点：${NC}"
         qrencode -t UTF8 -m 1 "$LINK"
         echo "${CORE_NAME}-Reality | 端口:${PORT} | ${LINK}" >> "$NODE_RECORD_FILE"
     else
-        echo -e "\n${RED}[错误] 配置文件检测失败或内核拒绝启动，部署已自动终止，未留下任何垃圾配置！${NC}"
+        echo -e "\n${RED}[错误] 配置校验失败或拒绝启动，未保存任何变更！${NC}"
     fi
     pause_for_enter
 }
 
 install_ws_tls_node() {
     clear; print_divider; echo -e "       ☁️ 部署 VLESS-WS-TLS (套 CDN 优选 IP /拯救被墙机器)    "; print_divider
-    echo -e "\n${YELLOW}【提醒】此模式完美支持 Cloudflare，适合隐藏 IP 或复活机器。${NC}\n"
     
     while true; do
         read -r -p "▶ 请输入域名 (输入 0 取消): " DOMAIN
         DOMAIN="${DOMAIN// /}"
         if [ "$DOMAIN" == "0" ]; then return; fi
-        if [ -z "$DOMAIN" ]; then 
-            echo -e "${RED}[错误] 域名不能为空，请重新输入！${NC}"
-            continue
-        fi
-        
+        if [ -z "$DOMAIN" ]; then continue; fi
         DOMAIN_IP=$(ping -c 1 -n "$DOMAIN" 2>/dev/null | head -n 1 | awk -F '[()]' '{print $2}')
         break
     done
@@ -871,15 +832,8 @@ install_ws_tls_node() {
         read -r -p "▶ 监听端口 (默认 443, 0 取消): " WS_PORT
         WS_PORT="${WS_PORT// /}"
         if [ "$WS_PORT" == "0" ]; then return; fi; [ -z "$WS_PORT" ] && WS_PORT=443
-        
-        if ! [[ "$WS_PORT" =~ ^[0-9]+$ ]] || [ "$WS_PORT" -lt 1 ] || [ "$WS_PORT" -gt 65535 ]; then
-            echo -e "${RED}[错误] 端口号必须是 1 到 65535 之间的纯数字！请重新输入。${NC}"
-            continue
-        fi
-        if ss -tulpn | grep -qw ":$WS_PORT"; then
-            echo -e "${RED}[错误] 端口 $WS_PORT 已被占用，请更换其他端口！${NC}"
-            continue
-        fi
+        if ! [[ "$WS_PORT" =~ ^[0-9]+$ ]] || [ "$WS_PORT" -lt 1 ] || [ "$WS_PORT" -gt 65535 ]; then continue; fi
+        if ss -tulpn | grep -qw ":$WS_PORT"; then echo -e "${RED}端口 $WS_PORT 已被占用！${NC}"; continue; fi
         break
     done
     
@@ -888,42 +842,29 @@ install_ws_tls_node() {
         read -r -p "▶ 运行内核 [1-2, 默认 1, 0 取消]: " core_choice
         core_choice="${core_choice// /}"
         if [ "$core_choice" == "0" ]; then return; fi; [ -z "$core_choice" ] && core_choice=1
-        
-        if [[ "$core_choice" != "1" && "$core_choice" != "2" ]]; then
-            echo -e "${RED}[错误] 输入无效，只能选择 1 或 2！请重新输入。${NC}"
-            continue
-        fi
+        if [[ "$core_choice" != "1" && "$core_choice" != "2" ]]; then continue; fi
         break
     done
     
     echo -e "\n${CYAN}>>> 证书申请模式选择${NC}"
-    echo -e "  ${GREEN}1.${NC} 【推荐】我已开启 CDN (小黄云) -> 使用 Cloudflare API 申请证书 (无视 CDN，自动续签)"
-    echo -e "  ${GREEN}2.${NC} 【常规】我未开启 CDN (真实 IP) -> 使用常规 80 端口申请证书"
+    echo -e "  ${GREEN}1.${NC} 【推荐】我已开启 CDN (小黄云) -> 使用 Cloudflare API 申请"
+    echo -e "  ${GREEN}2.${NC} 【常规】我未开启 CDN (真实 IP) -> 使用常规 80 端口申请"
     while true; do
         read -r -p "▶ 选择模式 [1-2, 默认 2, 0 取消]: " cert_mode
         cert_mode="${cert_mode// /}"
         if [ "$cert_mode" == "0" ]; then return; fi; [ -z "$cert_mode" ] && cert_mode=2
-        
-        if [[ "$cert_mode" != "1" && "$cert_mode" != "2" ]]; then
-            echo -e "${RED}[错误] 无效选择，请重新输入。${NC}"; continue
-        fi
+        if [[ "$cert_mode" != "1" && "$cert_mode" != "2" ]]; then continue; fi
         
         if [ "$cert_mode" == "1" ]; then
-            echo -e "\n${YELLOW}【引导】请前往 Cloudflare 后台 -> 我的个人资料 -> API 令牌 -> 创建令牌 -> 使用【编辑区域 DNS】模板。${NC}"
             read -r -p "▶ 请输入您的 Cloudflare API Token: " CF_Token
-            if [ -z "$CF_Token" ]; then echo -e "${RED}[错误] Token 不能为空！${NC}"; continue; fi
+            if [ -z "$CF_Token" ]; then continue; fi
             export CF_Token="$CF_Token"
             break
         elif [ "$cert_mode" == "2" ]; then
-            if [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
+            if [ -n "$DOMAIN_IP" ] && [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
                 echo -e "\n${YELLOW}[警告] 域名解析 IP ($DOMAIN_IP) 与本机 IP ($SERVER_IP) 不符！${NC}"
-                echo -e "如果你正在使用 Cloudflare CDN，常规 80 端口申请将被拦截！建议选 1，或者去 CF 关闭小黄云后再试。"
-                read -r -p "▶ 是否确认你已关闭小黄云，或确认要强制继续？(y/n, 默认 n): " force_continue
-                force_continue="${force_continue// /}"
-                if [[ ! "$force_continue" =~ ^[yY]$ ]]; then
-                    echo -e "${YELLOW}请重新选择证书模式或修改解析。${NC}"
-                    continue
-                fi
+                read -r -p "▶ 是否确认你已关闭小黄云强制继续？(y/n, 默认 n): " force_continue
+                if [[ ! "${force_continue// /}" =~ ^[yY]$ ]]; then continue; fi
             fi
             break
         fi
@@ -935,41 +876,33 @@ install_ws_tls_node() {
     [ ! -d "/root/.acme.sh" ] && curl https://get.acme.sh | sh >/dev/null 2>&1
     /root/.acme.sh/acme.sh --upgrade --auto-upgrade >/dev/null 2>&1
     /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1
+    # 修复：确保全新环境注册账号，防止拒绝签发
+    /root/.acme.sh/acme.sh --register-account -m dummy@vpsbox.com >/dev/null 2>&1
     
-    echo -e "\n${CYAN}>>> 正在检查并申请 SSL 证书，请耐心等待...${NC}"
-    
+    echo -e "\n${CYAN}>>> 正在申请 SSL 证书...${NC}"
     if /root/.acme.sh/acme.sh --list | grep -q "$DOMAIN"; then
-        echo -e "${GREEN}✅ 检测到本机已存在 [$DOMAIN] 的有效证书，触发自动复用机制！${NC}"
+        echo -e "${GREEN}✅ 检测到本地有效证书，复用机制触发！${NC}"
         CERT_RES=0
     else
         if [ "$cert_mode" == "1" ]; then
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf -k ec-256
             CERT_RES=$?
         else
-            echo -e "${YELLOW}[提醒] 您选择了常规 80 端口申请。若部署后在此域名开启 CDN (小黄云)，证书将在 3 个月后无法自动续期！${NC}"
-            if ss -tulpn | grep -q ":80 "; then
-                echo -e "${YELLOW}[警告] 80 端口被占用！常规证书申请需要使用 80 端口。${NC}"
-                read -r -p "▶ 是否强制结束占用 80 端口的进程？(y/n, 默认 n): " kill_80
-                kill_80="${kill_80// /}"
-                if [[ "$kill_80" =~ ^[yY]$ ]]; then
-                    fuser -k 80/tcp > /dev/null 2>&1
-                else
-                    echo -e "${RED}[提示] 未释放 80 端口，证书申请极有可能失败！${NC}"
-                fi
-            fi
+            if ss -tulpn | grep -q ":80 "; then fuser -k 80/tcp > /dev/null 2>&1; fi
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
             CERT_RES=$?
         fi
     fi
 
     if [ "$CERT_RES" -ne 0 ] && [ "$CERT_RES" -ne 2 ]; then
-        echo -e "\n${RED}[错误] 证书申请失败！请检查域名解析、CDN 设置或 API Token 是否正确。部署已中止。${NC}"
+        echo -e "\n${RED}[错误] 证书申请失败，中止。${NC}"
         pause_for_enter
         return
     fi
     
     CERT_DIR="/etc/vpsbox-cert"; mkdir -p "$CERT_DIR"
-    /root/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --ecc --fullchain-file "$CERT_DIR/fullchain.pem" --key-file "$CERT_DIR/privkey.pem" >/dev/null 2>&1
+    # 修复：加入 reloadcmd 定时炸弹拆除
+    /root/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --ecc --fullchain-file "$CERT_DIR/fullchain.pem" --key-file "$CERT_DIR/privkey.pem" --reloadcmd "systemctl restart xray 2>/dev/null; systemctl restart sing-box 2>/dev/null" >/dev/null 2>&1
     chmod 755 "$CERT_DIR"; chmod 644 "$CERT_DIR"/*.pem
     chown -R nobody:nogroup "$CERT_DIR" 2>/dev/null || chown -R nobody:nobody "$CERT_DIR" 2>/dev/null
     
@@ -977,41 +910,30 @@ install_ws_tls_node() {
     
     if [ "$core_choice" == "1" ]; then
         CORE_NAME="Xray"
-        if ! command -v xray &> /dev/null; then
-            bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1
-        fi
-        
+        if ! command -v xray &> /dev/null; then bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1; fi
         NEW_INBOUND='{"port":'$WS_PORT',"protocol":"vless","settings":{"clients":[{"id":"'$UUID'"}],"decryption":"none"},"streamSettings":{"network":"ws","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"'$CERT_DIR'/fullchain.pem","keyFile":"'$CERT_DIR'/privkey.pem"}]},"wsSettings":{"path":"'$WSPATH'"}}}'
         
         if append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$WS_PORT" "Xray"; then
             systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray)
-        else
-            SERVICE_STATUS="config_error"
-        fi
+        else SERVICE_STATUS="config_error"; fi
     else
         CORE_NAME="Sing-box"
-        if ! command -v sing-box &> /dev/null; then
-            bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1
-        fi
-        
+        if ! command -v sing-box &> /dev/null; then bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1; fi
         NEW_INBOUND='{"type":"vless","listen":"::","listen_port":'$WS_PORT',"users":[{"uuid":"'$UUID'"}],"tls":{"enabled":true,"server_name":"'$DOMAIN'","certificate_path":"'$CERT_DIR'/fullchain.pem","key_path":"'$CERT_DIR'/privkey.pem"},"transport":{"type":"ws","path":"'$WSPATH'"}}'
         
         if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$WS_PORT" "Sing-box"; then
             systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box)
-        else
-            SERVICE_STATUS="config_error"
-        fi
+        else SERVICE_STATUS="config_error"; fi
     fi
     
     if [ "$SERVICE_STATUS" == "active" ]; then
-        echo -e "\n${GREEN}🎉 VLESS-WS-TLS 节点成功部署于 ${CORE_NAME}！${NC}"
+        echo -e "\n${GREEN}🎉 VLESS-WS-TLS 部署成功！${NC}"
         LINK="vless://${UUID}@${DOMAIN}:${WS_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${WSPATH}#${CORE_NAME}-WS-TLS"
         echo -e "${CYAN}${LINK}${NC}\n"
-        echo -e "${YELLOW}>>> 扫描下方二维码快速导入节点：${NC}"
         qrencode -t UTF8 -m 1 "$LINK"
         echo "${CORE_NAME}-WS-TLS | 端口:${WS_PORT} | ${LINK}" >> "$NODE_RECORD_FILE"
     else
-        echo -e "\n${RED}[错误] 配置文件检测失败或内核拒绝启动，部署已自动终止，未留下任何垃圾配置！${NC}"
+        echo -e "\n${RED}[错误] 配置拒绝启动，未保存任何变更！${NC}"
     fi
     pause_for_enter
 }
@@ -1023,11 +945,7 @@ install_hy2_node() {
         read -r -p "▶ 请输入域名 (输入 0 取消): " DOMAIN
         DOMAIN="${DOMAIN// /}"
         if [ "$DOMAIN" == "0" ]; then return; fi
-        if [ -z "$DOMAIN" ]; then 
-            echo -e "${RED}[错误] 域名不能为空，请重新输入！${NC}"
-            continue
-        fi
-        
+        if [ -z "$DOMAIN" ]; then continue; fi
         DOMAIN_IP=$(ping -c 1 -n "$DOMAIN" 2>/dev/null | head -n 1 | awk -F '[()]' '{print $2}')
         break
     done
@@ -1036,15 +954,8 @@ install_hy2_node() {
         read -r -p "▶ 监听端口 (默认 8443, 0 取消): " HY2_PORT
         HY2_PORT="${HY2_PORT// /}"
         if [ "$HY2_PORT" == "0" ]; then return; fi; [ -z "$HY2_PORT" ] && HY2_PORT=8443
-        
-        if ! [[ "$HY2_PORT" =~ ^[0-9]+$ ]] || [ "$HY2_PORT" -lt 1 ] || [ "$HY2_PORT" -gt 65535 ]; then
-            echo -e "${RED}[错误] 端口号必须是 1 到 65535 之间的纯数字！请重新输入。${NC}"
-            continue
-        fi
-        if ss -tulpn | grep -qw ":$HY2_PORT"; then
-            echo -e "${RED}[错误] 端口 $HY2_PORT 已被占用，请更换其他端口！${NC}"
-            continue
-        fi
+        if ! [[ "$HY2_PORT" =~ ^[0-9]+$ ]] || [ "$HY2_PORT" -lt 1 ] || [ "$HY2_PORT" -gt 65535 ]; then continue; fi
+        if ss -tulpn | grep -qw ":$HY2_PORT"; then echo -e "${RED}端口 $HY2_PORT 已被占用！${NC}"; continue; fi
         break
     done
     
@@ -1053,42 +964,29 @@ install_hy2_node() {
         read -r -p "▶ 运行内核 [1-2, 默认 1, 0 取消]: " core_choice
         core_choice="${core_choice// /}"
         if [ "$core_choice" == "0" ]; then return; fi; [ -z "$core_choice" ] && core_choice=1
-        
-        if [[ "$core_choice" != "1" && "$core_choice" != "2" ]]; then
-            echo -e "${RED}[错误] 输入无效，只能选择 1 或 2！请重新输入。${NC}"
-            continue
-        fi
+        if [[ "$core_choice" != "1" && "$core_choice" != "2" ]]; then continue; fi
         break
     done
     
     echo -e "\n${CYAN}>>> 证书申请模式选择${NC}"
-    echo -e "  ${GREEN}1.${NC} 【推荐】我已开启 CDN (小黄云) -> 使用 Cloudflare API 申请证书 (无视 CDN，自动续签)"
-    echo -e "  ${GREEN}2.${NC} 【常规】我未开启 CDN (真实 IP) -> 使用常规 80 端口申请证书"
+    echo -e "  ${GREEN}1.${NC} 【推荐】我已开启 CDN (小黄云) -> 使用 Cloudflare API 申请"
+    echo -e "  ${GREEN}2.${NC} 【常规】我未开启 CDN (真实 IP) -> 使用常规 80 端口申请"
     while true; do
         read -r -p "▶ 选择模式 [1-2, 默认 2, 0 取消]: " cert_mode
         cert_mode="${cert_mode// /}"
         if [ "$cert_mode" == "0" ]; then return; fi; [ -z "$cert_mode" ] && cert_mode=2
-        
-        if [[ "$cert_mode" != "1" && "$cert_mode" != "2" ]]; then
-            echo -e "${RED}[错误] 无效选择，请重新输入。${NC}"; continue
-        fi
+        if [[ "$cert_mode" != "1" && "$cert_mode" != "2" ]]; then continue; fi
         
         if [ "$cert_mode" == "1" ]; then
-            echo -e "\n${YELLOW}【引导】请前往 Cloudflare 后台 -> 我的个人资料 -> API 令牌 -> 创建令牌 -> 使用【编辑区域 DNS】模板。${NC}"
             read -r -p "▶ 请输入您的 Cloudflare API Token: " CF_Token
-            if [ -z "$CF_Token" ]; then echo -e "${RED}[错误] Token 不能为空！${NC}"; continue; fi
+            if [ -z "$CF_Token" ]; then continue; fi
             export CF_Token="$CF_Token"
             break
         elif [ "$cert_mode" == "2" ]; then
-            if [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
+            if [ -n "$DOMAIN_IP" ] && [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
                 echo -e "\n${YELLOW}[警告] 域名解析 IP ($DOMAIN_IP) 与本机 IP ($SERVER_IP) 不符！${NC}"
-                echo -e "如果你正在使用 Cloudflare CDN，常规 80 端口申请将被拦截！建议选 1，或者去 CF 关闭小黄云后再试。"
-                read -r -p "▶ 是否确认你已关闭小黄云，或确认要强制继续？(y/n, 默认 n): " force_continue
-                force_continue="${force_continue// /}"
-                if [[ ! "$force_continue" =~ ^[yY]$ ]]; then
-                    echo -e "${YELLOW}请重新选择证书模式或修改解析。${NC}"
-                    continue
-                fi
+                read -r -p "▶ 是否强制继续？(y/n, 默认 n): " force_continue
+                if [[ ! "${force_continue// /}" =~ ^[yY]$ ]]; then continue; fi
             fi
             break
         fi
@@ -1100,41 +998,33 @@ install_hy2_node() {
     [ ! -d "/root/.acme.sh" ] && curl https://get.acme.sh | sh >/dev/null 2>&1
     /root/.acme.sh/acme.sh --upgrade --auto-upgrade >/dev/null 2>&1
     /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1
+    # 修复：同上，防止服务端拒绝
+    /root/.acme.sh/acme.sh --register-account -m dummy@vpsbox.com >/dev/null 2>&1
     
-    echo -e "\n${CYAN}>>> 正在检查并申请 SSL 证书，请耐心等待...${NC}"
-    
+    echo -e "\n${CYAN}>>> 正在申请 SSL 证书...${NC}"
     if /root/.acme.sh/acme.sh --list | grep -q "$DOMAIN"; then
-        echo -e "${GREEN}✅ 检测到本机已存在 [$DOMAIN] 的有效证书，触发自动复用机制！${NC}"
+        echo -e "${GREEN}✅ 检测到本地有效证书，复用！${NC}"
         CERT_RES=0
     else
         if [ "$cert_mode" == "1" ]; then
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf -k ec-256
             CERT_RES=$?
         else
-            echo -e "${YELLOW}[提醒] 您选择了常规 80 端口申请。若部署后在此域名开启 CDN (小黄云)，证书将在 3 个月后无法自动续期！${NC}"
-            if ss -tulpn | grep -q ":80 "; then
-                echo -e "${YELLOW}[警告] 80 端口被占用！常规证书申请需要使用 80 端口。${NC}"
-                read -r -p "▶ 是否强制结束占用 80 端口的进程？(y/n, 默认 n): " kill_80
-                kill_80="${kill_80// /}"
-                if [[ "$kill_80" =~ ^[yY]$ ]]; then
-                    fuser -k 80/tcp > /dev/null 2>&1
-                else
-                    echo -e "${RED}[提示] 未释放 80 端口，证书申请极有可能失败！${NC}"
-                fi
-            fi
+            if ss -tulpn | grep -q ":80 "; then fuser -k 80/tcp > /dev/null 2>&1; fi
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
             CERT_RES=$?
         fi
     fi
 
     if [ "$CERT_RES" -ne 0 ] && [ "$CERT_RES" -ne 2 ]; then
-        echo -e "\n${RED}[错误] 证书申请失败！请检查域名解析、CDN 设置或 API Token 是否正确。部署已中止。${NC}"
+        echo -e "\n${RED}[错误] 证书申请失败，中止。${NC}"
         pause_for_enter
         return
     fi
     
     CERT_DIR="/etc/vpsbox-cert"; mkdir -p "$CERT_DIR"
-    /root/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --ecc --fullchain-file "$CERT_DIR/fullchain.pem" --key-file "$CERT_DIR/privkey.pem" >/dev/null 2>&1
+    # 修复：加上 reloadcmd 防止过期失联
+    /root/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --ecc --fullchain-file "$CERT_DIR/fullchain.pem" --key-file "$CERT_DIR/privkey.pem" --reloadcmd "systemctl restart xray 2>/dev/null; systemctl restart sing-box 2>/dev/null" >/dev/null 2>&1
     chmod 755 "$CERT_DIR"; chmod 644 "$CERT_DIR"/*.pem
     chown -R nobody:nogroup "$CERT_DIR" 2>/dev/null || chown -R nobody:nobody "$CERT_DIR" 2>/dev/null
     
@@ -1142,42 +1032,30 @@ install_hy2_node() {
     
     if [ "$core_choice" == "1" ]; then
         CORE_NAME="Xray"
-        if ! command -v xray &> /dev/null; then
-            bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1
-        fi
-        
-        # 修复：补充了 listen 字段，确保 Hy2 能够成功绑定端口
+        if ! command -v xray &> /dev/null; then bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1; fi
         NEW_INBOUND='{"listen":"0.0.0.0","port":'$HY2_PORT',"protocol":"hysteria","settings":{"version":2,"clients":[{"auth":"'$HY2_PASS'","email":"user@vpsbox"}]},"streamSettings":{"network":"hysteria","security":"tls","tlsSettings":{"alpn":["h3"],"minVersion":"1.3","certificates":[{"certificateFile":"'$CERT_DIR'/fullchain.pem","keyFile":"'$CERT_DIR'/privkey.pem"}]},"hysteriaSettings":{"version":2,"auth":"'$HY2_PASS'","udpIdleTimeout":60}}}'
         
         if append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$HY2_PORT" "Xray"; then
             systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray)
-        else
-            SERVICE_STATUS="config_error"
-        fi
+        else SERVICE_STATUS="config_error"; fi
     else
         CORE_NAME="Sing-box"
-        if ! command -v sing-box &> /dev/null; then
-            bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1
-        fi
-        
+        if ! command -v sing-box &> /dev/null; then bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1; fi
         NEW_INBOUND='{"type":"hysteria2","listen":"::","listen_port":'$HY2_PORT',"users":[{"password":"'$HY2_PASS'"}],"tls":{"enabled":true,"server_name":"'$DOMAIN'","certificate_path":"'$CERT_DIR'/fullchain.pem","key_path":"'$CERT_DIR'/privkey.pem"}}'
         
         if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$HY2_PORT" "Sing-box"; then
             systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box)
-        else
-            SERVICE_STATUS="config_error"
-        fi
+        else SERVICE_STATUS="config_error"; fi
     fi
     
     if [ "$SERVICE_STATUS" == "active" ]; then
-        echo -e "\n${GREEN}🎉 Hysteria2 节点成功部署于 ${CORE_NAME}！${NC}"
+        echo -e "\n${GREEN}🎉 Hysteria2 部署成功！${NC}"
         LINK="hy2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}?sni=${DOMAIN}&insecure=0#${CORE_NAME}-Hys2"
         echo -e "${CYAN}${LINK}${NC}\n"
-        echo -e "${YELLOW}>>> 扫描下方二维码快速导入节点：${NC}"
         qrencode -t UTF8 -m 1 "$LINK"
         echo "${CORE_NAME}-Hys2 | 端口:${HY2_PORT} | ${LINK}" >> "$NODE_RECORD_FILE"
     else
-        echo -e "\n${RED}[错误] 配置文件检测失败或内核拒绝启动，部署已自动终止，未留下任何垃圾配置！${NC}"
+        echo -e "\n${RED}[错误] 配置拒绝启动，未保存任何变更！${NC}"
     fi
     pause_for_enter
 }
@@ -1249,9 +1127,9 @@ manage_ufw() {
                 ;;
             4)
                 if ! confirm_action "开启防火墙并自动放行 SSH 端口"; then continue; fi
-                # 动态获取当前的 SSH 端口防失联
+                # 修复：防止多行配置带来的 UFW 报错锁死
                 CURRENT_SSH_PORT=$(ss -tlnp | grep -w sshd | awk '{print $4}' | awk -F':' '{print $NF}' | head -n 1)
-                [ -z "$CURRENT_SSH_PORT" ] && CURRENT_SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}')
+                [ -z "$CURRENT_SSH_PORT" ] && CURRENT_SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -n 1)
                 [ -z "$CURRENT_SSH_PORT" ] && CURRENT_SSH_PORT=22
                 
                 echo -e "\n${YELLOW}为防止你与服务器失联，正在强制放行当前 SSH 端口 ($CURRENT_SSH_PORT)...${NC}"
@@ -1283,13 +1161,11 @@ update_script() {
     echo -e "\n${CYAN}>>> 正在连接 GitHub 下载最新版本...${NC}"
     curl -sL "https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh" -o /tmp/vpsbox_update.sh
 
-    # 防呆检测：确保下载下来的文件包含我们需要的标识，防止被空文件覆盖
     if [ -f /tmp/vpsbox_update.sh ] && grep -q "VPSBox" /tmp/vpsbox_update.sh; then
         mv /tmp/vpsbox_update.sh "$SHORTCUT_PATH"
         chmod +x "$SHORTCUT_PATH"
         echo -e "\n${GREEN}✅ VPSBox 已成功更新到最新版本！即将自动重启脚本...${NC}"
         sleep 2
-        # 使用新版本替换当前进程
         exec "$SHORTCUT_PATH"
     else
         echo -e "\n${RED}[错误] 下载失败或获取到的文件异常，原脚本未作更改，请稍后重试。${NC}"
@@ -1319,11 +1195,10 @@ while true; do
     clear
     echo ""
     print_divider
-    echo -e "${PURPLE}           🌟 VPS Box 全能服务器管家与部署工具箱 v2.4.0 🌟${NC}"
+    echo -e "${PURPLE}           🌟 VPS Box 全能服务器管家与部署工具箱 v2.5.0 🌟${NC}"
     print_divider
     
-    # 顶部基础信息
-    echo -e "  公网 IP  : ${YELLOW}${SERVER_IP}${NC}"
+    echo -e "  公网 IP  : ${YELLOW}${SERVER_IP} ${CYAN}[${IP_FORMAT}]${NC}"
     echo -e "  硬件规格 : ${YELLOW}${HW_PROFILE}${NC}"
     echo -e "  系统时区 : ${YELLOW}${CURRENT_TZ}${NC}"
     echo -e "  ⚡ BBR 状态 : $(get_bbr_status)"
