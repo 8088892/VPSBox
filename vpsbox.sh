@@ -443,29 +443,231 @@ EOF
 }
 
 apply_tuning() {
-    local PROFILE=$1; local TCP_RMEM=$2; local TCP_WMEM=$3
-    clear; print_divider; echo -e "       ⚙️ TCP 自动调优注入    "; print_divider
-    if ! confirm_action "注入 TCP 底层调优参数"; then pause_for_enter; return; fi
+    clear; print_divider; echo -e "       ⚙️ 动态 TCP 自动调优注入 (VPSBox 核心)    "; print_divider
+    echo -e "${YELLOW}【模式说明】${NC}"
+    echo -e "  ${GREEN}1. 正常模式${NC}: 科学稳健，结合你的带宽和延迟智能计算 BDP，适合日常建站、常规代理。"
+    echo -e "  ${RED}2. 激进模式${NC}: Beta特性，无视慢启动，极致压榨带宽，高并发利器。${YELLOW}(警告：可能增加丢包率与内存消耗)${NC}"
+    print_separator
     
+    # 1. 模式选择
+    local mode_choice
+    while true; do
+        read -r -p "▶ 请选择调优模式 [1-正常 / 2-激进, 输入 0 取消]: " mode_choice
+        mode_choice="${mode_choice// /}"
+        if [ "$mode_choice" == "0" ]; then return; fi
+        if [[ "$mode_choice" == "1" || "$mode_choice" == "2" ]]; then break; fi
+        echo -e "${RED}[错误] 请输入 1 或 2！${NC}"
+    done
+
+    # 2. 参数收集 (带有防呆检测，严格要求手动输入)
+    local local_bw server_bw latency ramp_up
+    while true; do
+        read -r -p "▶ 请输入本地/客户端下行带宽 (Mbps, 例如 500): " local_bw
+        [[ "${local_bw// /}" =~ ^[0-9]+$ ]] && break || echo -e "${RED}[错误] 请输入有效的纯数字！${NC}"
+    done
+    while true; do
+        read -r -p "▶ 请输入服务器上行带宽 (Mbps, 例如 1000): " server_bw
+        [[ "${server_bw// /}" =~ ^[0-9]+$ ]] && break || echo -e "${RED}[错误] 请输入有效的纯数字！${NC}"
+    done
+    while true; do
+        read -r -p "▶ 请输入预估网络延迟 (ms, 例如 150): " latency
+        [[ "${latency// /}" =~ ^[0-9]+$ ]] && break || echo -e "${RED}[错误] 请输入有效的纯数字！${NC}"
+    done
+    while true; do
+        echo -e "\n${CYAN}【爬升曲线指南】${NC}"
+        echo -e " ${GREEN}0.1 - 0.4${NC}: 保守稳定 (适合 512M 等极小内存机器)"
+        echo -e " ${GREEN}0.5 - 0.6${NC}: 平稳传输 (适合日常建站，不抢占资源)"
+        echo -e " ${YELLOW}0.7 - 0.9${NC}: 快速响应 (推荐，自动关闭慢启动，看剧极速)"
+        echo -e " ${RED}1.0      ${NC}: 极限跑分 (双倍 BDP 冗余，强力压榨带宽)"
+        read -r -p "▶ 请输入爬升曲线调节 (0.1 - 1.0): " ramp_up
+     
+        if awk -v r="${ramp_up// /}" 'BEGIN{if(r>=0.1 && r<=1.0) exit 0; else exit 1}'; then
+            break
+        fi
+        echo -e "${RED}[错误] 请输入 0.1 到 1.0 之间的有效数字！${NC}"
+    done
+
+    # 3. 自动探测内存
+    local w_ram=$(free -m | awk '/^Mem:/{print $2}')
+    if [ -z "$w_ram" ] || [ "$w_ram" -le 0 ]; then w_ram=1024; fi
+    echo -e "\n${CYAN}>>> 系统自动探测内存: ${GREEN}${w_ram} MB${NC}"
+
+    # 4. 动态核心计算 (全逻辑重构版)
+    eval $(awk -v mode="$mode_choice" -v lbw="$local_bw" -v sbw="$server_bw" -v lat="$latency" -v ramp="$ramp_up" -v w="$w_ram" '
+    function min(a, b) { return a < b ? a : b }
+    function max(a, b) { return a > b ? a : b }
+    BEGIN {
+        bw = min(lbw, sbw)
+        init_win = int(4096 + (65536 - 4096) * ramp)
+        def_win = int(65536 + (524288 - 65536) * ramp)
+        slow_start = (ramp >= 0.7) ? 0 : 1
+
+        gc1 = (w <= 512) ? 256 : 512
+        gc2 = (w <= 512) ? 1024 : 2048
+        gc3 = (w <= 512) ? 2048 : 4096
+        
+        # 全局内存安全墙 (单连接最大允许占用物理内存的 1/16，防止 OOM)
+        global_ram_cap = (w * 1048576) / 16.0 
+
+        if (mode == "1") {
+            bdp = (bw * 125000) * (lat / 1000.0)
+            
+            # 修复1: 将曲线完美融入最大缓冲区，0.7 对应 1.7 倍 BDP，1.0 对应 2 倍 BDP
+            max_buf = int(max(bdp * (1.0 + ramp), 16777216))
+            # 增加兜底保护：即使填写 1.0 拉满，也绝不能超过全局内存安全墙
+            max_buf = int(min(max_buf, global_ram_cap))
+            
+            t_mem = int(384*w) " " int(512*w) " " int(768*w)
+            m_free = int(max(131072, 32*w))
+
+            printf "INIT_WIN=%d\nDEF_WIN=%d\nMAX_BUF=%d\nTCP_MEM=\"%s\"\nSLOW_START=%d\nMIN_FREE=%d\n", init_win, def_win, max_buf, t_mem, slow_start, m_free
+        } else {
+            M = bw * 125000
+            b = lat
+            bdp_mult = min(12.0, 6.0 + (w / 1024.0))
+            ram_cap = 1024.0 * w * 153.6
+            
+            # 修复2: 激进模式强制引入用户填写的 ramp 乘数
+            x_var = int(max(min(M * b / 1000.0 * bdp_mult * ramp, ram_cap), 4194304))
+            # 同样受到全局安全墙保护
+            x_var = int(min(x_var, global_ram_cap))
+            
+            k = min(b / 100.0, 5.0)
+            q = min(M / 1048576.0, 15000.0)
+            S = min(6 * w, 24576)
+
+            nd_max = int(min(S, 6000 + q * k))
+            t_max_syn = int(min(S / 2.0, 3000 + (q * k) / 2.0))
+            m_orphans = (w <= 256) ? 16384 : 32768
+            
+            # 修复3: 根据当前填写的延迟，智能分配忙轮询策略
+            if (b <= 50) {
+                b_read = 100;
+                b_poll = 100
+            } else if (b <= 150) {
+                b_read = 50;
+                b_poll = 50
+            } else {
+                b_read = 0;
+                b_poll = 0
+            }
+            
+            t_mem = int(512*w) " " int(768*w) " " int(1024*w)
+
+            printf "X_VAR=%d\nND_MAX=%d\nT_MAX_SYN=%d\nM_ORPHANS=%d\nB_READ=%d\nB_POLL=%d\nTCP_MEM=\"%s\"\n", x_var, nd_max, t_max_syn, m_orphans, b_read, b_poll, t_mem
+        }
+        printf "GC1=%d\nGC2=%d\nGC3=%d\n", gc1, gc2, gc3
+    }')
+
+    # 5. 确认执行
+    
+    echo -e "${CYAN}>>> 动态参数计算完毕！准备注入底层。${NC}"
+    if ! confirm_action "执行并使上述 TCP 调优参数生效"; then pause_for_enter; return; fi
+    
+    # 备份原有参数
     read -r -p "▶ 是否在调优前备份当前参数？(y/n, 默认 y): " NEED_BACKUP
     NEED_BACKUP="${NEED_BACKUP// /}"
     [[ -z "$NEED_BACKUP" || "$NEED_BACKUP" =~ ^[yY]$ ]] && backup_config_silently
-    
+
+    # 6. 生成配置文件
     cat > "$CUSTOM_CONF" <<EOF
+# ==========================================
+# VPSBox 网络调优核心逻辑 (动态计算生成)
+# ==========================================
+net.ipv4.tcp_timestamps = 1
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_fin_timeout = 30
+net.ipv4.tcp_keepalive_time = 1200
+net.ipv4.tcp_keepalive_intvl = 60
+net.ipv4.tcp_synack_retries = 2
+net.ipv4.tcp_syn_retries = 2
+net.ipv4.tcp_abort_on_overflow = 0
+net.ipv4.tcp_rfc1337 = 0
+net.ipv4.route.gc_timeout = 100
+net.ipv4.neigh.default.gc_stale_time = 120
+net.ipv4.neigh.default.gc_thresh1 = $GC1
+net.ipv4.neigh.default.gc_thresh2 = $GC2
+net.ipv4.neigh.default.gc_thresh3 = $GC3
+net.ipv4.ip_forward = 0
+net.ipv4.ip_local_port_range = 1024 65535
+net.ipv4.ip_no_pmtu_disc = 0
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.all.secure_redirects = 0
+net.ipv4.conf.default.secure_redirects = 0
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv4.conf.all.forwarding = 0
+net.ipv4.conf.default.forwarding = 0
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.arp_announce = 2
+net.ipv4.conf.default.arp_announce = 2
+net.ipv4.conf.all.arp_ignore = 1
+net.ipv4.conf.default.arp_ignore = 1
+EOF
+
+    if [ "$mode_choice" == "1" ]; then
+        cat >> "$CUSTOM_CONF" <<EOF
+# --- 正常模式 (爬升率: $ramp_up) ---
+net.core.rmem_max = $MAX_BUF
+net.core.wmem_max = $MAX_BUF
+net.core.rmem_default = $DEF_WIN
+net.core.wmem_default = $DEF_WIN
+net.ipv4.tcp_rmem = $INIT_WIN $DEF_WIN $MAX_BUF
+net.ipv4.tcp_wmem = $INIT_WIN $DEF_WIN $MAX_BUF
+net.ipv4.tcp_mem = $TCP_MEM
+net.ipv4.tcp_slow_start_after_idle = $SLOW_START
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
-net.ipv4.tcp_rmem = $TCP_RMEM
-net.ipv4.tcp_wmem = $TCP_WMEM
-net.ipv4.tcp_adv_win_scale = -2
-net.ipv4.tcp_sack = 1
-net.ipv4.tcp_dsack = 1
-net.ipv4.tcp_window_scaling = 1
-net.ipv4.tcp_fin_timeout = 30
-net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_mtu_probing = 1
+vm.swappiness = 10
+vm.min_free_kbytes = $MIN_FREE
+net.ipv4.tcp_max_syn_backlog = 4096
+net.core.netdev_max_backlog = 5000
+net.core.somaxconn = 8192
 EOF
+    else
+        cat >> "$CUSTOM_CONF" <<EOF
+# --- 激进模式 (Extreme Beta - 爬升率: $ramp_up) ---
+net.core.rmem_max = $(( 2 * X_VAR ))
+net.core.wmem_max = $X_VAR
+net.core.rmem_default = 524288
+net.core.wmem_default = 524288
+net.ipv4.tcp_rmem = 65536 524288 $(( 2 * X_VAR ))
+net.ipv4.tcp_wmem = 65536 524288 $X_VAR
+net.ipv4.tcp_mem = $TCP_MEM
+net.core.netdev_max_backlog = $ND_MAX
+net.ipv4.tcp_max_syn_backlog = $T_MAX_SYN
+net.core.somaxconn = 32768
+net.ipv4.tcp_max_orphans = $M_ORPHANS
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_notsent_lowat = 32768
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_mtu_probing = 2
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_fack = 1
+vm.min_free_kbytes = $(( w_ram < 4096 ? 262144 : 64 * w_ram ))
+vm.swappiness = 1
+net.core.optmem_max = $(( w_ram < 1024 ? 163840 : 160 * w_ram ))
+kernel.sched_min_granularity_ns = 3000000
+net.core.busy_read = $B_READ
+net.core.busy_poll = $B_POLL
+EOF
+    fi
+
+    # 尝试加载 BBR 并应用配置
+    modprobe tcp_bbr > /dev/null 2>&1
     sysctl -p "$CUSTOM_CONF" > /dev/null 2>&1
-    echo -e "\n${GREEN}✅ 网络调优注入成功！底层并发吞吐已优化。${NC}"
+    
+    echo -e "\n${GREEN}✅ TCP 动态调优参数已成功注入并生效！${NC}"
+    echo -e "⚡ 当前 BBR 状态: $(get_bbr_status)"
     pause_for_enter
 }
 
@@ -576,7 +778,8 @@ view_deployed_nodes() {
         fi
         
         if [ -f "/etc/sing-box/config.json" ] && grep -q "inbounds" "/etc/sing-box/config.json"; then
-            jq -r '.inbounds[] | "【Sing-box】 端口: \(.listen_port) | 协议: \(.type) | 网络: \(if .type == "hysteria2" then "udp" else (.transport.type // "tcp") end) | 安全: \(if .tls.reality.enabled then "reality" elif .tls.enabled then "tls" else "none" end)"' /etc/sing-box/config.json 2>/dev/null || echo -e "${YELLOW}配置文件解析失败。${NC}"
+            # 修复：安全解析 jq 链式调用，防止空指针抛出致命错误
+            jq -r '.inbounds[] | "【Sing-box】 端口: \(.listen_port) | 协议: \(.type) | 网络: \(if .type == "hysteria2" then "udp" else (.transport.type // "tcp") end) | 安全: \(if (.tls.reality.enabled // false) then "reality" elif (.tls.enabled // false) then "tls" else "none" end)"' /etc/sing-box/config.json 2>/dev/null || echo -e "${YELLOW}配置文件解析失败。${NC}"
         else
             echo -e "${YELLOW}未检测到 Sing-box 节点配置。${NC}"
         fi
@@ -705,18 +908,29 @@ delete_node() {
     
     if [ -f "/usr/local/etc/xray/config.json" ]; then
         if jq -e ".inbounds[] | select(.port == $del_port)" /usr/local/etc/xray/config.json > /dev/null 2>&1; then
+            # 修复：安全检查输出，防止格式错误导致清空配置
             jq "del(.inbounds[] | select(.port == $del_port))" /usr/local/etc/xray/config.json > /tmp/xray_tmp.json
-            mv /tmp/xray_tmp.json /usr/local/etc/xray/config.json
-            systemctl restart xray
-            echo -e "${GREEN}✅ 已成功移除 Xray 中占用端口 $del_port 的节点配置！${NC}"
+            if [ -s /tmp/xray_tmp.json ]; then
+                mv /tmp/xray_tmp.json /usr/local/etc/xray/config.json
+                systemctl restart xray
+                echo -e "${GREEN}✅ 已成功移除 Xray 中占用端口 $del_port 的节点配置！${NC}"
+            else
+                rm -f /tmp/xray_tmp.json
+                echo -e "${RED}[错误] Xray 节点删除失败，配置可能受损！${NC}"
+            fi
         fi
     fi
     if [ -f "/etc/sing-box/config.json" ]; then
         if jq -e ".inbounds[] | select(.listen_port == $del_port)" /etc/sing-box/config.json > /dev/null 2>&1; then
             jq "del(.inbounds[] | select(.listen_port == $del_port))" /etc/sing-box/config.json > /tmp/sb_tmp.json
-            mv /tmp/sb_tmp.json /etc/sing-box/config.json
-            systemctl restart sing-box
-            echo -e "${GREEN}✅ 已成功移除 Sing-box 中占用端口 $del_port 的节点配置！${NC}"
+            if [ -s /tmp/sb_tmp.json ]; then
+                mv /tmp/sb_tmp.json /etc/sing-box/config.json
+                systemctl restart sing-box
+                echo -e "${GREEN}✅ 已成功移除 Sing-box 中占用端口 $del_port 的节点配置！${NC}"
+            else
+                rm -f /tmp/sb_tmp.json
+                echo -e "${RED}[错误] Sing-box 节点删除失败，配置可能受损！${NC}"
+            fi
         fi
     fi
     
@@ -916,12 +1130,20 @@ install_ws_tls_node() {
     install_dependencies
     
     [ ! -d "/root/.acme.sh" ] && curl https://get.acme.sh | sh >/dev/null 2>&1
+    # 修复：验证 acme 脚本是否真装上了
+    if [ ! -f "/root/.acme.sh/acme.sh" ]; then
+        echo -e "\n${RED}[错误] Acme.sh 证书脚本安装失败！可能是网络被阻断。${NC}"
+        pause_for_enter
+        return
+    fi
+
     /root/.acme.sh/acme.sh --upgrade --auto-upgrade >/dev/null 2>&1
     /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1
-    # 修复：确保全新环境注册账号，防止拒绝签发
     /root/.acme.sh/acme.sh --register-account -m dummy@vpsbox.com >/dev/null 2>&1
     
     echo -e "\n${CYAN}>>> 正在申请 SSL 证书...${NC}"
+    PORT_80_SERVICE=""
+    
     if /root/.acme.sh/acme.sh --list | grep -q "$DOMAIN"; then
         echo -e "${GREEN}✅ 检测到本地有效证书，复用机制触发！${NC}"
         CERT_RES=0
@@ -930,9 +1152,33 @@ install_ws_tls_node() {
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf -k ec-256
             CERT_RES=$?
         else
-            if ss -tulpn | grep -q ":80 "; then fuser -k 80/tcp > /dev/null 2>&1; fi
+            # 修复：80 端口占用智能感知与安全恢复逻辑
+            if ss -tlnp | grep -q "\b:80\b"; then
+                PORT_80_SERVICE=$(ss -tlnp | grep "\b:80\b" | awk -F'"' '{print $2}' | grep -v "^$" | head -n 1)
+                [ -z "$PORT_80_SERVICE" ] && PORT_80_SERVICE=$(fuser 80/tcp 2>/dev/null | awk '{print $1}')
+                [ -z "$PORT_80_SERVICE" ] && PORT_80_SERVICE="未知程序"
+                
+                echo -e "\n${YELLOW}[警告] 检测到 80 端口正被 [ ${PORT_80_SERVICE} ] 占用！${NC}"
+                echo -e "${YELLOW}由于您选择了常规 80 端口申请模式，强行继续会临时关闭该程序，并在申请结束后尝试重启它。${NC}"
+                echo -e "${RED}⚠️ 严重提示：如果该程序后续继续长期占用 80 端口，将导致您的证书无法自动续签！建议您返回主菜单，改用【DNS API 模式】。${NC}"
+                
+                read -r -p "▶ 是否仍要临时关闭 [${PORT_80_SERVICE}] 强行继续申请？(y/n, 默认 n): " force_kill_80
+                if [[ ! "${force_kill_80// /}" =~ ^[yY]$ ]]; then
+                    echo -e "${CYAN}已取消当前操作。${NC}"
+                    pause_for_enter
+                    return
+                fi
+                fuser -k 80/tcp > /dev/null 2>&1
+                sleep 2
+            fi
+            
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
             CERT_RES=$?
+            
+            if [ -n "$PORT_80_SERVICE" ] && [ "$PORT_80_SERVICE" != "未知程序" ]; then
+                echo -e "${CYAN}>>> 正在尝试为您恢复原本的 [${PORT_80_SERVICE}] 服务...${NC}"
+                systemctl restart "$PORT_80_SERVICE" >/dev/null 2>&1 || echo -e "${RED}[注意] ${PORT_80_SERVICE} 恢复失败，请稍后手动检查。${NC}"
+            fi
         fi
     fi
 
@@ -943,7 +1189,6 @@ install_ws_tls_node() {
     fi
     
     CERT_DIR="/etc/vpsbox-cert"; mkdir -p "$CERT_DIR"
-    # 修复：加入 reloadcmd 定时炸弹拆除
     /root/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --ecc --fullchain-file "$CERT_DIR/fullchain.pem" --key-file "$CERT_DIR/privkey.pem" --reloadcmd "systemctl restart xray 2>/dev/null; systemctl restart sing-box 2>/dev/null" >/dev/null 2>&1
     chmod 755 "$CERT_DIR"; chmod 644 "$CERT_DIR"/*.pem
     chown -R nobody:nogroup "$CERT_DIR" 2>/dev/null || chown -R nobody:nobody "$CERT_DIR" 2>/dev/null
@@ -1040,12 +1285,20 @@ install_hy2_node() {
     install_dependencies
     
     [ ! -d "/root/.acme.sh" ] && curl https://get.acme.sh | sh >/dev/null 2>&1
+    # 修复：验证 acme 脚本是否真装上了
+    if [ ! -f "/root/.acme.sh/acme.sh" ]; then
+        echo -e "\n${RED}[错误] Acme.sh 证书脚本安装失败！可能是网络被阻断。${NC}"
+        pause_for_enter
+        return
+    fi
+
     /root/.acme.sh/acme.sh --upgrade --auto-upgrade >/dev/null 2>&1
     /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1
-    # 修复：同上，防止服务端拒绝
     /root/.acme.sh/acme.sh --register-account -m dummy@vpsbox.com >/dev/null 2>&1
     
     echo -e "\n${CYAN}>>> 正在申请 SSL 证书...${NC}"
+    PORT_80_SERVICE=""
+
     if /root/.acme.sh/acme.sh --list | grep -q "$DOMAIN"; then
         echo -e "${GREEN}✅ 检测到本地有效证书，复用！${NC}"
         CERT_RES=0
@@ -1054,9 +1307,33 @@ install_hy2_node() {
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf -k ec-256
             CERT_RES=$?
         else
-            if ss -tulpn | grep -q ":80 "; then fuser -k 80/tcp > /dev/null 2>&1; fi
+            # 修复：80 端口占用智能感知与安全恢复逻辑
+            if ss -tlnp | grep -q "\b:80\b"; then
+                PORT_80_SERVICE=$(ss -tlnp | grep "\b:80\b" | awk -F'"' '{print $2}' | grep -v "^$" | head -n 1)
+                [ -z "$PORT_80_SERVICE" ] && PORT_80_SERVICE=$(fuser 80/tcp 2>/dev/null | awk '{print $1}')
+                [ -z "$PORT_80_SERVICE" ] && PORT_80_SERVICE="未知程序"
+                
+                echo -e "\n${YELLOW}[警告] 检测到 80 端口正被 [ ${PORT_80_SERVICE} ] 占用！${NC}"
+                echo -e "${YELLOW}由于您选择了常规 80 端口申请模式，强行继续会临时关闭该程序，并在申请结束后尝试重启它。${NC}"
+                echo -e "${RED}⚠️ 严重提示：如果该程序后续继续长期占用 80 端口，将导致您的证书无法自动续签！建议您返回主菜单，改用【DNS API 模式】。${NC}"
+                
+                read -r -p "▶ 是否仍要临时关闭 [${PORT_80_SERVICE}] 强行继续申请？(y/n, 默认 n): " force_kill_80
+                if [[ ! "${force_kill_80// /}" =~ ^[yY]$ ]]; then
+                    echo -e "${CYAN}已取消当前操作。${NC}"
+                    pause_for_enter
+                    return
+                fi
+                fuser -k 80/tcp > /dev/null 2>&1
+                sleep 2
+            fi
+            
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
             CERT_RES=$?
+            
+            if [ -n "$PORT_80_SERVICE" ] && [ "$PORT_80_SERVICE" != "未知程序" ]; then
+                echo -e "${CYAN}>>> 正在尝试为您恢复原本的 [${PORT_80_SERVICE}] 服务...${NC}"
+                systemctl restart "$PORT_80_SERVICE" >/dev/null 2>&1 || echo -e "${RED}[注意] ${PORT_80_SERVICE} 恢复失败，请稍后手动检查。${NC}"
+            fi
         fi
     fi
 
@@ -1067,7 +1344,6 @@ install_hy2_node() {
     fi
     
     CERT_DIR="/etc/vpsbox-cert"; mkdir -p "$CERT_DIR"
-    # 修复：加上 reloadcmd 防止过期失联
     /root/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --ecc --fullchain-file "$CERT_DIR/fullchain.pem" --key-file "$CERT_DIR/privkey.pem" --reloadcmd "systemctl restart xray 2>/dev/null; systemctl restart sing-box 2>/dev/null" >/dev/null 2>&1
     chmod 755 "$CERT_DIR"; chmod 644 "$CERT_DIR"/*.pem
     chown -R nobody:nogroup "$CERT_DIR" 2>/dev/null || chown -R nobody:nobody "$CERT_DIR" 2>/dev/null
@@ -1258,7 +1534,7 @@ while true; do
     echo -e "  ${GREEN}9.${NC} 修改 SSH 默认登录端口"
     
     echo -e "\n  ${CYAN}【网络协议与性能极速优化】${NC}"
-    echo -e "  ${GREEN}10.${NC} TCP自动调优 (含 BBR+FQ+SACK)  ${YELLOW}(提升底层并发与吞吐)${NC}"
+    echo -e "  ${GREEN}10.${NC} 动态 TCP 自动调优注入         ${YELLOW}(智能动态适应，提升吞吐)${NC}"
     echo -e "  ${GREEN}11.${NC} 网络调优参数备份/还原管理\n  ${GREEN}12.${NC} BBR 拥塞控制智能管理中心      ${YELLOW}[支持 Google BBRv3]${NC}"
     
     echo -e "\n  ${CYAN}【流媒体检测与节点防冲突部署】${NC}"
@@ -1292,7 +1568,7 @@ while true; do
         7) manage_swap ;;
         8) optimize_dns ;;
         9) change_ssh_port ;;
-        10) if [ "$RAM_GB" -le 1 ]; then apply_tuning "$HW_PROFILE" "4096 87380 16777216" "4096 16384 16777216"; elif [ "$RAM_GB" -le 2 ]; then apply_tuning "$HW_PROFILE" "8192 131072 67108864" "4096 16384 67108864"; else apply_tuning "高配" "8192 262144 1073741824" "4096 16384 1073741824"; fi ;;
+        10) apply_tuning ;;
         11) manage_backup ;;
         12) manage_bbr ;;
         13) check_media_unlock ;;
