@@ -442,43 +442,53 @@ EOF
                 echo -e "${GREEN}✅ BBRv1 已成功开启！${NC}";
 sleep 2
                 ;;
-            2)
+                        2)
                 if ! command -v apt &> /dev/null; then echo -e "\n${RED}[错误] BBRv3 安装仅支持 Debian/Ubuntu。${NC}"; sleep 2; continue; fi
                 if ! confirm_action "安装 BBRv3 内核"; then continue; fi
-                echo -e "\n${CYAN}>>> 正在下载并部署 XanMod 核心...${NC}"
-                apt update -y > /dev/null 2>&1
+                echo -e "\n${CYAN}>>> 正在下载 XanMod 官方密钥 (增强防拦截模式)...${NC}"
                 
-                # 【Gemini 修复】增加 --yes 强制覆盖参数，防止 GPG 提示导致脚本假死死锁
-                wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor --yes -o /usr/share/keyrings/xanmod-archive-keyring.gpg
+                # [span_2](start_span)[span_3](start_span)使用 curl 绕过 CDN 拦截并强制覆盖现有密钥，解决 gpg 数据无效报错[span_2](end_span)[span_3](end_span)
+                curl -fSsL https://dl.xanmod.org/archive.key | gpg --dearmor --yes -o /usr/share/keyrings/xanmod-archive-keyring.gpg
                 
+                # [span_4](start_span)严格检查密钥文件是否下载成功（文件大小不为0）[span_4](end_span)
+                if [ ! -s /usr/share/keyrings/xanmod-archive-keyring.gpg ]; then
+                    echo -e "\n${RED}[错误] 密钥下载失败！文件为空，可能是 CDN 暂时拦截，请重试。${NC}"
+                    rm -f /usr/share/keyrings/xanmod-archive-keyring.gpg
+                    sleep 3; continue
+                fi
+
                 echo 'deb [signed-by=/usr/share/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' > /etc/apt/sources.list.d/xanmod-release.list
-                apt update -y > /dev/null 2>&1
                 
-                # 【Gemini 修复】将已废弃的 linux-xanmod-lts 替换为现代标准版 linux-xanmod-x64v3
+                echo -e "\n${CYAN}>>> 正在更新软件源...${NC}"
+                apt update -y
+                
+                echo -e "\n${CYAN}>>> 正在安装 XanMod BBRv3 内核 (x64v3 标准版)...${NC}"
                 apt install -y linux-xanmod-x64v3
                 
-                # 【Claude 修复】加入安装结果状态码拦截，防止假成功
-                if [ $? -ne 0 ]; then
-                    echo -e "\n${RED}[错误] XanMod 内核安装失败，已中止！请检查网络或软件源是否可用。${NC}"
-                    sleep 2; continue
-                fi
-                
-                cat > /etc/sysctl.d/99-bbr.conf <<EOF
+                # [span_5](start_span)加入安装状态码拦截，只有成功安装内核后才写入 BBR 配置[span_5](end_span)
+                if [ $? -eq 0 ]; then
+                    cat > /etc/sysctl.d/99-bbr.conf <<EOF
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 EOF
-                update-grub
-                echo -e "\n${GREEN}🎉 BBRv3 核心部署完毕！需要重启后生效。${NC}"
-                
-                # 【Claude 修复】拦截强制重启，交由用户 y/n 选择
-                read -r -p "▶ 是否立即重启服务器？(y/n, 默认 n): " do_reboot
-                if [[ "${do_reboot// /}" =~ ^[yY]$ ]]; then
-                    sleep 2; reboot
+                    [span_6](start_span)[span_7](start_span)update-grub[span_6](end_span)[span_7](end_span)
+                    echo -e "\n${GREEN}🎉 BBRv3 核心部署完毕！需要重启后生效。${NC}"
+                    
+                    # [span_8](start_span)拦截强制重启，将决定权交给用户[span_8](end_span)
+                    read -r -p "▶ 是否立即重启服务器？(y/n, 默认 n): " do_reboot
+                    if [[ "${do_reboot// /}" =~ ^[yY]$ ]]; then
+                        echo -e "${YELLOW}正在重启服务器...${NC}"
+                        [span_9](start_span)[span_10](start_span)sleep 2; reboot[span_9](end_span)[span_10](end_span)
+                    else
+                        echo -e "${YELLOW}请记得稍后手动执行 reboot 命令使新内核生效。${NC}"
+                        sleep 2
+                    fi
                 else
-                    echo -e "${YELLOW}请稍后手动执行 reboot 命令使新内核生效。${NC}"
-                    sleep 2
+                    echo -e "\n${RED}[错误] 内核安装失败！请查看上方 apt 的具体报错。${NC}"
+                    sleep 3
                 fi
                 ;;
+
 3)
                 if !
 confirm_action "卸载 BBRv3 (完成后将重启服务器)"; then continue; fi
