@@ -348,9 +348,7 @@ get_bbr_status() {
 
 manage_bbr() {
     while true; do
-        clear; print_divider;
-        echo -e "${PURPLE}                  🚀 BBR 拥塞控制智能管理中心${NC}";
-        print_divider
+        clear; print_divider; echo -e "${PURPLE}                  🚀 BBR 拥塞控制智能管理中心${NC}"; print_divider
         echo -e "  📊 当前内核版本 : ${YELLOW}$(uname -r)${NC}"
         echo -e "  ⚡ 当前 BBR 状态: $(get_bbr_status)"
         echo -e "  💡 说明: 使用业内最稳定的 XanMod 内核为您无缝安装纯正的 Google BBRv3。"
@@ -358,8 +356,7 @@ manage_bbr() {
         echo -e "  ${GREEN}1.${NC} 开启 BBRv1 (极速秒开 / 适合所有系统)"
         echo -e "  ${GREEN}2.${NC} 安装 BBRv3 (合入谷歌最新 V3 分支 / 延迟更低更激进)"
         echo -e "  ${GREEN}3.${NC} 卸载 BBRv3 (安全回退至系统原生默认内核)"
-        print_separator;
-        echo -e "  ${GREEN}0.${NC} 返回主菜单"; print_divider; echo ""
+        print_separator; echo -e "  ${GREEN}0.${NC} 返回主菜单"; print_divider; echo ""
         
         read -r -p "▶ 请输入编号 [0-3]: " bbr_opt
         bbr_opt="${bbr_opt// /}"
@@ -374,8 +371,7 @@ net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 EOF
                 sysctl -p /etc/sysctl.d/99-bbr.conf > /dev/null 2>&1
-                echo -e "${GREEN}✅ BBRv1 已成功开启！${NC}";
-                sleep 2
+                echo -e "${GREEN}✅ BBRv1 已成功开启！${NC}"; sleep 2
                 ;;
             2)
                 if ! command -v apt &> /dev/null; then echo -e "\n${RED}[错误] BBRv3 安装仅支持 Debian/Ubuntu。${NC}"; sleep 2; continue; fi
@@ -396,7 +392,7 @@ EOF
                 
                 echo -e "\n${CYAN}>>> 正在更新软件源...${NC}"
                 apt update -y
-                
+        
                 echo -e "\n${CYAN}>>> 正在安装 XanMod BBRv3 内核 (x64v3 标准版)...${NC}"
                 apt install -y linux-xanmod-x64v3
                 
@@ -436,11 +432,9 @@ EOF
                 echo -e "\n${CYAN}>>> 正在清理内核文件...${NC}"
                 apt purge -y "^linux-image.*xanmod.*" "^linux-headers.*xanmod.*"
                 rm -f /etc/apt/sources.list.d/xanmod-release.list /usr/share/keyrings/xanmod-archive-keyring.gpg
-                apt update -y > /dev/null 2>&1;
-                update-grub
+                apt update -y > /dev/null 2>&1; update-grub
                 echo -e "\n${GREEN}✅ 卸载成功！即将重启服务器回退至系统原生内核...${NC}"
-                sleep 3;
-                reboot
+                sleep 3; reboot
                 ;;
             0) break ;;
             *) echo -e "\n${RED}[提示] 编号错误！${NC}"; sleep 1 ;;
@@ -507,8 +501,7 @@ manage_backup() {
                 while true; do
                     echo -e "\n${CYAN}请选择要恢复的时间点：${NC}"
                     for i in "${!backups[@]}"; do 
-                        echo -e "  ${GREEN}$((i+1)).${NC} 备份日期: $(stat -c "%y" "${backups[$i]}" | cut -d'.' -f1)";
-                    done
+                        echo -e "  ${GREEN}$((i+1)).${NC} 备份日期: $(stat -c "%y" "${backups[$i]}" | cut -d'.' -f1)"; done
                     read -r -p "▶ 请输入编号 (0取消): " res_opt
                     res_opt="${res_opt// /}"
                     
@@ -516,8 +509,7 @@ manage_backup() {
                     if [[ "$res_opt" =~ ^[0-9]+$ ]] && [ "$res_opt" -ge 1 ] && [ "$res_opt" -le "${#backups[@]}" ]; then
                         if ! confirm_action "覆盖当前配置并还原至此备份"; then break; fi
                         sysctl -p "${backups[$((res_opt-1))]}" > /dev/null 2>&1
-                        rm -f "$CUSTOM_CONF";
-                        echo -e "\n${GREEN}✅ 参数已成功还原！${NC}"
+                        rm -f "$CUSTOM_CONF"; echo -e "\n${GREEN}✅ 参数已成功还原！${NC}"
                         pause_for_enter
                         break
                     else
@@ -532,8 +524,7 @@ manage_backup() {
                 while true; do
                     echo -e "\n${CYAN}请选择要删除的备份：${NC}"
                     for i in "${!backups[@]}"; do 
-                        echo -e "  ${GREEN}$((i+1)).${NC} 备份日期: $(stat -c "%y" "${backups[$i]}" | cut -d'.' -f1)";
-                    done
+                        echo -e "  ${GREEN}$((i+1)).${NC} 备份日期: $(stat -c "%y" "${backups[$i]}" | cut -d'.' -f1)"; done
                     echo -e "  ${RED}99.${NC} 清空所有"
                     read -r -p "▶ 请输入编号 (0取消): " del_opt
                     del_opt="${del_opt// /}"
@@ -541,14 +532,12 @@ manage_backup() {
                     if [ "$del_opt" == "0" ]; then break; fi
                     if [[ "$del_opt" =~ ^[0-9]+$ ]] && [ "$del_opt" -ge 1 ] && [ "$del_opt" -le "${#backups[@]}" ]; then
                         if ! confirm_action "永久删除此备份"; then break; fi
-                        rm -f "${backups[$((del_opt-1))]}";
-                        echo -e "\n${GREEN}✅ 记录已删除。${NC}"
+                        rm -f "${backups[$((del_opt-1))]}"; echo -e "\n${GREEN}✅ 记录已删除。${NC}"
                         pause_for_enter
                         break
                     elif [ "$del_opt" -eq 99 ]; then
                         if ! confirm_action "永久清空所有备份"; then break; fi
-                        rm -f "${BACKUP_DIR}"/backup_*.conf;
-                        echo -e "\n${GREEN}✅ 已清空所有备份。${NC}"
+                        rm -f "${BACKUP_DIR}"/backup_*.conf; echo -e "\n${GREEN}✅ 已清空所有备份。${NC}"
                         pause_for_enter
                         break
                     else
@@ -822,8 +811,7 @@ install_reality_node() {
     elif [[ "$sni_choice" == "2" ]]; then 
         SNI_DOMAIN="www.microsoft.com"
     else 
-        SNI_DOMAIN="$sni_choice";
-    fi
+        SNI_DOMAIN="$sni_choice"; fi
     
     if ! confirm_action "开始部署 Reality 节点"; then pause_for_enter; return; fi
     install_dependencies
@@ -843,8 +831,7 @@ install_reality_node() {
         if append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$PORT" "Xray"; then
             systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray)
         else 
-            SERVICE_STATUS="config_error";
-        fi
+            SERVICE_STATUS="config_error"; fi
     else
         CORE_NAME="Sing-box"
         if ! command -v sing-box &> /dev/null; then bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1; fi
@@ -855,8 +842,7 @@ install_reality_node() {
         if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$PORT" "Sing-box"; then
             systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box)
         else 
-            SERVICE_STATUS="config_error";
-        fi
+            SERVICE_STATUS="config_error"; fi
     fi
     
     if [ "$SERVICE_STATUS" == "active" ]; then
@@ -972,8 +958,7 @@ install_ws_tls_node() {
         if append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$WS_PORT" "Xray"; then
             systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray)
         else 
-            SERVICE_STATUS="config_error"; 
-        fi
+            SERVICE_STATUS="config_error"; fi
     else
         CORE_NAME="Sing-box"
         if ! command -v sing-box &> /dev/null; then bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1; fi
@@ -982,8 +967,7 @@ install_ws_tls_node() {
         if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$WS_PORT" "Sing-box"; then
             systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box)
         else 
-            SERVICE_STATUS="config_error"; 
-        fi
+            SERVICE_STATUS="config_error"; fi
     fi
     
     if [ "$SERVICE_STATUS" == "active" ]; then
@@ -1098,8 +1082,7 @@ install_hy2_node() {
         if append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$HY2_PORT" "Xray"; then
             systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray)
         else 
-            SERVICE_STATUS="config_error"; 
-        fi
+            SERVICE_STATUS="config_error"; fi
     else
         CORE_NAME="Sing-box"
         if ! command -v sing-box &> /dev/null; then bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1; fi
@@ -1108,8 +1091,7 @@ install_hy2_node() {
         if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$HY2_PORT" "Sing-box"; then
             systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box)
         else 
-            SERVICE_STATUS="config_error"; 
-        fi
+            SERVICE_STATUS="config_error"; fi
     fi
     
     if [ "$SERVICE_STATUS" == "active" ]; then
@@ -1284,7 +1266,8 @@ while true; do
     echo -e "  ${GREEN}14.${NC} 部署 VLESS-Reality            ${YELLOW}(直连低延迟 / 强力防封锁)${NC}"
     echo -e "  ${GREEN}15.${NC} 部署 VLESS-WS-TLS             ${YELLOW}(套 CDN 优选 IP / 拯救被墙机器)${NC}"
     echo -e "  ${GREEN}16.${NC} 部署 Hysteria2                ${YELLOW}(UDP 暴力发包 / 抢占高带宽)${NC}"
-    echo -e "  ${GREEN}17.${NC} 查看已部署节点与备份管理      ${GREEN}18.${NC} 删除指定的已部署节点"
+    echo -e "  ${GREEN}17.${NC} 查看已部署节点与备份管理"
+    echo -e "  ${GREEN}18.${NC} 删除指定的已部署节点"
     
     echo -e "\n  ${CYAN}【附加实用工具与安全拓展】${NC}"
     echo -e "  ${GREEN}19.${NC} Cloudflare WARP 一键解锁      ${YELLOW}(获取干净 IP / 规避验证码)${NC}"
