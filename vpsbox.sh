@@ -1219,7 +1219,7 @@ manage_ufw() {
 # =========================================================
 
 update_script() {
-    clear; print_divider; echo -e "       🔄 一键更新 VPSBox 脚本自身    "; print_divider
+    clear; print_divider; echo -e "       一键更新 VPSBox 脚本自身    "; print_divider
     if ! confirm_action "从 GitHub 拉取最新版 VPSBox 并覆盖当前脚本"; then pause_for_enter; return; fi
 
     echo -e "\n${CYAN}>>> 正在连接 GitHub 下载最新版本...${NC}"
@@ -1289,7 +1289,7 @@ while true; do
     echo -e "\n  ${CYAN}【附加实用工具与安全拓展】${NC}"
     echo -e "  ${GREEN}19.${NC} Cloudflare WARP 一键解锁      ${YELLOW}(获取干净 IP / 规避验证码)${NC}"
     echo -e "  ${GREEN}20.${NC} UFW 防火墙简单端口管理        ${YELLOW}(防呆管理 / 一键放行端口)${NC}"
-    echo -e "  ${GREEN}21.${NC} 🔄 一键更新 VPSBox 脚本自身"
+    echo -e "  ${GREEN}21.${NC} 一键更新 VPSBox 脚本自身"
     echo -e "  ${RED}99.${NC} 彻底卸载 VPSBox 及系统残留"
 
     print_separator
