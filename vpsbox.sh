@@ -3,7 +3,7 @@
 # =====================================================================
 # 项目名称: VPS Box (全能服务器优化与多节点部署工具箱)
 # 核心特性: 全局防冲突部署、智能复用证书、双内核自适应、系统管家
-# 版本: v2.0.1 (引入智能依赖检测 + 保持原版 UI 描述与自适应排版)
+# 版本: v2.1.0 (安全修复与节点备份增强版)
 # =====================================================================
 
 RED='\033[0;31m'
@@ -17,6 +17,8 @@ NC='\033[0m'
 BACKUP_DIR="/etc/vpsbox_backups"
 CUSTOM_CONF="/etc/sysctl.d/99-vpsbox-tcp.conf"
 SHORTCUT_PATH="/usr/local/bin/vpsbox"
+NODE_RECORD_FILE="/etc/vpsbox_nodes.txt"
+INSTALL_LOG="/tmp/vpsbox_install.log"
 
 mkdir -p "$BACKUP_DIR"
 
@@ -25,7 +27,7 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# 【修复 4：系统兼容性拦截，防止非 Debian/Ubuntu 系统执行强绑定 apt 命令导致崩溃】
+# 系统兼容性拦截
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     if [[ "$ID" != "debian" && "$ID" != "ubuntu" ]]; then
@@ -57,9 +59,7 @@ SERVER_IP=$(curl -s4 ifconfig.me || curl -s4 ip.sb)
 
 # --- UI 与交互组件 (自适应排版核心) ---
 get_term_width() {
-    # 动态获取终端宽度，失败则默认 65
     local cols=$(tput cols 2>/dev/null || echo 65)
-    # 限制最大宽度为 75，防止在电脑大屏上界面过于松散
     if [ "$cols" -gt 75 ]; then echo 75; else echo "$cols"; fi
 }
 
@@ -84,7 +84,7 @@ confirm_action() {
     local action_name=$1
     echo ""
     read -r -p "▶ 是否确认执行 [${action_name}]？(y/n, 默认 n): " confirm
-    confirm="${confirm// /}" # iPad空格剔除
+    confirm="${confirm// /}"
     if [[ ! "$confirm" =~ ^[yY]$ ]]; then
         echo -e "\n${YELLOW}已取消 [${action_name}] 操作。${NC}"
         return 1
@@ -92,24 +92,24 @@ confirm_action() {
     return 0
 }
 
-# 智能依赖检测：只在缺失时提示并安装
+# 智能依赖检测：只在缺失时提示并安装，加入错误日志输出
 install_dependencies() {
-    # 定义核心工具检测列表
-    local apps=("curl" "wget" "jq" "openssl" "socat" "fuser" "unzip")
+    local apps=("curl" "wget" "jq" "openssl" "socat" "fuser" "unzip" "qrencode")
     local missing_apps=()
 
-    # 循环检测哪些没安装
     for app in "${apps[@]}"; do
         if ! command -v "$app" &> /dev/null; then
             missing_apps+=("$app")
         fi
     done
 
-    # 只有发现缺失时，才显示提示并执行后台静默安装
     if [ ${#missing_apps[@]} -ne 0 ]; then
         echo -e "\n${CYAN}[系统] 检测到缺失必要底层组件，正在自动补全...${NC}"
-        apt-get update -y > /dev/null 2>&1
-        apt-get install -y curl wget sudo unzip tar openssl socat psmisc iputils-ping jq gnupg2 dnsutils bsdutils > /dev/null 2>&1
+        apt-get update -y > "$INSTALL_LOG" 2>&1
+        apt-get install -y curl wget sudo unzip tar openssl socat psmisc iputils-ping jq gnupg2 dnsutils bsdutils qrencode >> "$INSTALL_LOG" 2>&1
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}[警告] 某些组件安装可能存在异常，请查看 $INSTALL_LOG 排查原因。${NC}"
+        fi
     fi
 }
 
@@ -124,7 +124,7 @@ system_update() {
     echo -e "\n${CYAN}>>> 正在更新软件源并升级系统组件 (这可能需要几分钟)...${NC}"
     apt-get update -y && apt-get upgrade -y
     echo -e "\n${CYAN}>>> 正在安装必备工具包...${NC}"
-    apt-get install -y curl wget sudo unzip tar openssl socat psmisc iputils-ping jq gnupg2 dnsutils bsdutils
+    apt-get install -y curl wget sudo unzip tar openssl socat psmisc iputils-ping jq gnupg2 dnsutils bsdutils qrencode
     echo -e "\n${GREEN}✅ 系统更新与组件安装完毕！${NC}"
     pause_for_enter
 }
@@ -149,7 +149,6 @@ change_root_password() {
     
     echo -e "\n${YELLOW}提示：输入密码时屏幕不会显示字符，属于正常安全机制。${NC}\n"
     
-    # 捕获错误并提供重试选项
     while true; do
         passwd root
         if [ $? -eq 0 ]; then
@@ -172,10 +171,8 @@ change_root_password() {
 setup_ssh_key() {
     clear; print_divider; echo -e "       🛡️ 配置 SSH 密钥免密登录    "; print_divider
     
-    # 空输入防呆循环
     while true; do
         read -r -p "▶ 请粘贴您的公钥 (通常以 ssh-rsa 开头, 输入 0 取消): " pub_key
-        # 注意：这里不能剔除空格，否则会导致带有空格的 SSH 格式公钥直接作废
         if [ "$pub_key" == "0" ]; then return; fi
         if [ -z "$pub_key" ]; then 
             echo -e "${RED}[错误] 密钥内容不能为空，请重新输入！${NC}"
@@ -200,7 +197,7 @@ change_ssh_port() {
     
     while true; do
         read -r -p "▶ 请输入新的 SSH 端口号 (建议 10000-65535，输入 0 取消): " new_port
-        new_port="${new_port// /}" # iPad空格剔除
+        new_port="${new_port// /}"
         if [ "$new_port" == "0" ] || [ -z "$new_port" ]; then return; fi
         
         if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -le 1024 ] || [ "$new_port" -ge 65535 ]; then
@@ -223,10 +220,9 @@ change_hostname() {
     clear; print_divider; echo -e "       🏷️ 修改系统主机名 (Hostname)    "; print_divider
     echo -e "当前主机名: ${YELLOW}$(hostname)${NC}"
     
-    # 防呆校验
     while true; do
         read -r -p "▶ 请输入新的主机名 (仅限字母、数字和连字符, 输入 0 取消): " new_hostname
-        new_hostname="${new_hostname// /}" # iPad空格剔除
+        new_hostname="${new_hostname// /}"
         if [ "$new_hostname" == "0" ]; then return; fi
         if [ -z "$new_hostname" ]; then
             echo -e "${RED}[错误] 主机名不能为空，请重新输入！${NC}"
@@ -263,19 +259,18 @@ manage_swap() {
     local swap_size=$(free -m | grep -i swap | awk '{print $2}')
     echo -e "当前 Swap 大小: ${GREEN}${swap_size} MB${NC}\n"
     
-    # 加入防呆循环，输入错误不允许执行
     while true; do
         echo -e "  ${GREEN}1.${NC} 创建/修改 Swap (推荐 1024MB 或 2048MB)"
         echo -e "  ${GREEN}2.${NC} 关闭并删除现有 Swap"
         echo -e "  ${GREEN}0.${NC} 取消返回"
         read -r -p "▶ 请选择操作 [0-2]: " swap_opt
-        swap_opt="${swap_opt// /}" # iPad空格剔除
+        swap_opt="${swap_opt// /}"
         
         case $swap_opt in
             1)
                 while true; do
                     read -r -p "▶ 请输入 Swap 大小 (单位 MB，例如 1024): " input_size
-                    input_size="${input_size// /}" # iPad空格剔除
+                    input_size="${input_size// /}"
                     if [[ "$input_size" =~ ^[0-9]+$ ]]; then
                         break
                     else
@@ -304,12 +299,8 @@ manage_swap() {
                 echo -e "\n${GREEN}✅ Swap 已彻底关闭并清理！${NC}"
                 return
                 ;;
-            0)
-                return
-                ;;
-            *)
-                echo -e "\n${RED}[错误] 输入无效！请输入 0、1 或 2 进行选择。${NC}\n"
-                ;;
+            0) return ;;
+            *) echo -e "\n${RED}[错误] 输入无效！请输入 0、1 或 2 进行选择。${NC}\n" ;;
         esac
     done
 }
@@ -353,7 +344,7 @@ manage_bbr() {
         print_separator; echo -e "  ${GREEN}0.${NC} 返回主菜单"; print_divider; echo ""
         
         read -r -p "▶ 请输入编号 [0-3]: " bbr_opt
-        bbr_opt="${bbr_opt// /}" # iPad空格剔除
+        bbr_opt="${bbr_opt// /}"
         case $bbr_opt in
             1)
                 if ! confirm_action "立即开启系统原生 BBRv1"; then continue; fi
@@ -386,7 +377,6 @@ EOF
                 ;;
             3)
                 if ! confirm_action "卸载 BBRv3 (完成后将重启服务器)"; then continue; fi
-                # 【修复 2：卸载内核安全后路防变砖】
                 if ! dpkg -l | grep -qE "linux-image-(generic|amd64)"; then
                     echo -e "\n${YELLOW}>>> [安全拦截] 未检测到系统原生备用内核，正在自动安装...${NC}"
                     if grep -qi ubuntu /etc/os-release; then
@@ -414,7 +404,7 @@ apply_tuning() {
     if ! confirm_action "注入 TCP 底层调优参数"; then pause_for_enter; return; fi
     
     read -r -p "▶ 是否在调优前备份当前参数？(y/n, 默认 y): " NEED_BACKUP
-    NEED_BACKUP="${NEED_BACKUP// /}" # iPad空格剔除
+    NEED_BACKUP="${NEED_BACKUP// /}"
     [[ -z "$NEED_BACKUP" || "$NEED_BACKUP" =~ ^[yY]$ ]] && backup_config_silently
     
     cat > "$CUSTOM_CONF" <<EOF
@@ -450,7 +440,7 @@ manage_backup() {
         echo -e "  ${GREEN}0.${NC} 返回主菜单"
         echo ""
         read -r -p "▶ 请选择操作 [0-3]: " b_opt
-        b_opt="${b_opt// /}" # iPad空格剔除
+        b_opt="${b_opt// /}"
         
         case $b_opt in
             1)
@@ -468,7 +458,7 @@ manage_backup() {
                     echo -e "\n${CYAN}请选择要恢复的时间点：${NC}"
                     for i in "${!backups[@]}"; do echo -e "  ${GREEN}$((i+1)).${NC} 备份日期: $(stat -c "%y" "${backups[$i]}" | cut -d'.' -f1)"; done
                     read -r -p "▶ 请输入编号 (0取消): " res_opt
-                    res_opt="${res_opt// /}" # iPad空格剔除
+                    res_opt="${res_opt// /}"
                     
                     if [ "$res_opt" == "0" ]; then break; fi
                     if [[ "$res_opt" =~ ^[0-9]+$ ]] && [ "$res_opt" -ge 1 ] && [ "$res_opt" -le "${#backups[@]}" ]; then
@@ -491,7 +481,7 @@ manage_backup() {
                     for i in "${!backups[@]}"; do echo -e "  ${GREEN}$((i+1)).${NC} 备份日期: $(stat -c "%y" "${backups[$i]}" | cut -d'.' -f1)"; done
                     echo -e "  ${RED}99.${NC} 清空所有"
                     read -r -p "▶ 请输入编号 (0取消): " del_opt
-                    del_opt="${del_opt// /}" # iPad空格剔除
+                    del_opt="${del_opt// /}"
                     
                     if [ "$del_opt" == "0" ]; then break; fi
                     if [[ "$del_opt" =~ ^[0-9]+$ ]] && [ "$del_opt" -ge 1 ] && [ "$del_opt" -le "${#backups[@]}" ]; then
@@ -528,24 +518,106 @@ check_media_unlock() {
     pause_for_enter
 }
 
+# 节点查看与备份管理二合一
 view_deployed_nodes() {
-    clear; print_divider; echo -e "       📋 查看当前已部署节点状态    "; print_divider
-    install_dependencies
-    
-    echo -e "${CYAN}--- Xray 内核节点 ---${NC}"
-    if [ -f "/usr/local/etc/xray/config.json" ] && grep -q "inbounds" "/usr/local/etc/xray/config.json"; then
-        jq -r '.inbounds[] | "端口: \(.port) | 主协议: \(.protocol) | 网络/伪装: \(if .protocol == "hysteria" then "udp" else (.streamSettings.network // "tcp") end) | 安全/加密: \(.streamSettings.security // "none")"' /usr/local/etc/xray/config.json 2>/dev/null || echo -e "${YELLOW}配置文件解析失败。${NC}"
-    else
-        echo -e "${YELLOW}未检测到 Xray 节点配置。${NC}"
-    fi
-    
-    echo -e "\n${CYAN}--- Sing-box 内核节点 ---${NC}"
-    if [ -f "/etc/sing-box/config.json" ] && grep -q "inbounds" "/etc/sing-box/config.json"; then
-        jq -r '.inbounds[] | "端口: \(.listen_port) | 主协议: \(.type) | 网络/伪装: \(if .type == "hysteria2" then "udp" else (.transport.type // "tcp") end) | 安全/加密: \(if .tls.reality.enabled then "reality" elif .tls.enabled then "tls" else "none" end)"' /etc/sing-box/config.json 2>/dev/null || echo -e "${YELLOW}配置文件解析失败。${NC}"
-    else
-        echo -e "${YELLOW}未检测到 Sing-box 节点配置。${NC}"
-    fi
-    pause_for_enter
+    while true; do
+        clear; print_divider; echo -e "       📋 节点状态、分享与配置备份管理    "; print_divider
+        install_dependencies
+        
+        echo -e "${CYAN}--- 服务端底层配置状态 ---${NC}"
+        if [ -f "/usr/local/etc/xray/config.json" ] && grep -q "inbounds" "/usr/local/etc/xray/config.json"; then
+            jq -r '.inbounds[] | "【Xray】 端口: \(.port) | 协议: \(.protocol) | 网络: \(if .protocol == "hysteria" then "udp" else (.streamSettings.network // "tcp") end) | 安全: \(.streamSettings.security // "none")"' /usr/local/etc/xray/config.json 2>/dev/null || echo -e "${YELLOW}配置文件解析失败。${NC}"
+        else
+            echo -e "${YELLOW}未检测到 Xray 节点配置。${NC}"
+        fi
+        
+        if [ -f "/etc/sing-box/config.json" ] && grep -q "inbounds" "/etc/sing-box/config.json"; then
+            jq -r '.inbounds[] | "【Sing-box】 端口: \(.listen_port) | 协议: \(.type) | 网络: \(if .type == "hysteria2" then "udp" else (.transport.type // "tcp") end) | 安全: \(if .tls.reality.enabled then "reality" elif .tls.enabled then "tls" else "none" end)"' /etc/sing-box/config.json 2>/dev/null || echo -e "${YELLOW}配置文件解析失败。${NC}"
+        else
+            echo -e "${YELLOW}未检测到 Sing-box 节点配置。${NC}"
+        fi
+        
+        echo -e "\n${CYAN}--- 已保存的节点分享链接 ---${NC}"
+        local links=()
+        if [ -f "$NODE_RECORD_FILE" ]; then
+            mapfile -t links < "$NODE_RECORD_FILE"
+            if [ ${#links[@]} -eq 0 ]; then
+                echo -e "${YELLOW}暂无保存的分享链接。${NC}"
+            else
+                for i in "${!links[@]}"; do
+                    # 切割文本提取展示信息
+                    local info=$(echo "${links[$i]}" | awk -F' \\| ' '{print $1" "$2}')
+                    echo -e "  ${GREEN}$((i+1)).${NC} $info"
+                done
+            fi
+        else
+            echo -e "${YELLOW}暂无保存的分享链接记录。${NC}"
+        fi
+        
+        print_separator
+        echo -e "  [${GREEN}1-${#links[@]}${NC}] 输入编号：查看对应节点的二维码与完整链接"
+        echo -e "  [${GREEN}B${NC}] 备份：为所有节点配置文件创建快照"
+        echo -e "  [${GREEN}R${NC}] 还原：从历史快照恢复节点配置"
+        echo -e "  [${GREEN}0${NC}] 返回主菜单"
+        echo ""
+        read -r -p "▶ 请选择操作: " vn_opt
+        vn_opt="${vn_opt// /}"
+        
+        if [ "$vn_opt" == "0" ]; then break; fi
+        
+        # 1. 查看二维码与链接
+        if [[ "$vn_opt" =~ ^[0-9]+$ ]] && [ "$vn_opt" -ge 1 ] && [ "$vn_opt" -le "${#links[@]}" ]; then
+            local target_link=$(echo "${links[$((vn_opt-1))]}" | awk -F' \\| ' '{print $3}')
+            echo -e "\n${CYAN}>>> 节点分享链接：${NC}"
+            echo -e "${target_link}\n"
+            echo -e "${YELLOW}>>> 节点二维码 (支持绝大多数客户端扫码)：${NC}"
+            qrencode -t ANSIUTF8 "$target_link"
+            pause_for_enter
+            
+        # 2. 备份节点配置
+        elif [[ "$vn_opt" =~ ^[bB]$ ]]; then
+            if ! confirm_action "备份当前节点配置"; then continue; fi
+            local ts=$(date +"%Y%m%d_%H%M%S")
+            local bk_path="${BACKUP_DIR}/node_backup_${ts}"
+            mkdir -p "$bk_path"
+            [ -f "/usr/local/etc/xray/config.json" ] && cp /usr/local/etc/xray/config.json "$bk_path/xray_config.json"
+            [ -f "/etc/sing-box/config.json" ] && cp /etc/sing-box/config.json "$bk_path/singbox_config.json"
+            [ -f "$NODE_RECORD_FILE" ] && cp "$NODE_RECORD_FILE" "$bk_path/vpsbox_nodes.txt"
+            echo -e "\n${GREEN}✅ 节点配置已成功备份至: $bk_path ${NC}"
+            pause_for_enter
+            
+        # 3. 还原节点配置
+        elif [[ "$vn_opt" =~ ^[rR]$ ]]; then
+            shopt -s nullglob
+            local n_backups=("${BACKUP_DIR}"/node_backup_*)
+            shopt -u nullglob
+            if [ ${#n_backups[@]} -eq 0 ]; then
+                echo -e "\n${RED}未找到节点备份记录。${NC}"; pause_for_enter; continue
+            fi
+            
+            echo -e "\n${CYAN}请选择要还原的备份：${NC}"
+            for i in "${!n_backups[@]}"; do
+                echo -e "  ${GREEN}$((i+1)).${NC} 备份时间: $(basename "${n_backups[$i]}" | sed 's/node_backup_//')"
+            done
+            read -r -p "▶ 请输入编号 (0取消): " n_res_opt
+            n_res_opt="${n_res_opt// /}"
+            
+            if [ "$n_res_opt" == "0" ]; then continue; fi
+            if [[ "$n_res_opt" =~ ^[0-9]+$ ]] && [ "$n_res_opt" -ge 1 ] && [ "$n_res_opt" -le "${#n_backups[@]}" ]; then
+                if ! confirm_action "还原此备份 (当前配置将被覆盖，且服务会重启)"; then continue; fi
+                local sel_bk="${n_backups[$((n_res_opt-1))]}"
+                [ -f "$sel_bk/xray_config.json" ] && cp "$sel_bk/xray_config.json" /usr/local/etc/xray/config.json && systemctl restart xray
+                [ -f "$sel_bk/singbox_config.json" ] && cp "$sel_bk/singbox_config.json" /etc/sing-box/config.json && systemctl restart sing-box
+                [ -f "$sel_bk/vpsbox_nodes.txt" ] && cp "$sel_bk/vpsbox_nodes.txt" "$NODE_RECORD_FILE"
+                echo -e "\n${GREEN}✅ 节点配置已成功还原！服务已重启。${NC}"
+                pause_for_enter
+            else
+                echo -e "${RED}[错误] 输入无效编号！${NC}"; sleep 1
+            fi
+        else
+            echo -e "\n${RED}[错误] 输入无效，请重新选择！${NC}"; sleep 1
+        fi
+    done
 }
 
 delete_node() {
@@ -574,10 +646,9 @@ delete_node() {
 
     echo ""
     
-    # 严格端口校验防呆，提前阻拦不正确的输入
     while true; do
         read -r -p "▶ 请输入要删除的节点【端口号】 (输入 0 取消): " del_port
-        del_port="${del_port// /}" # iPad空格剔除
+        del_port="${del_port// /}"
         if [ "$del_port" == "0" ]; then return; fi
         
         if [ -z "$del_port" ]; then
@@ -590,7 +661,6 @@ delete_node() {
             continue
         fi
         
-        # 预先检查端口是否真的存在于配置中
         local port_exists=0
         if [ -f "/usr/local/etc/xray/config.json" ] && jq -e ".inbounds[] | select(.port == $del_port)" /usr/local/etc/xray/config.json > /dev/null 2>&1; then
             port_exists=1
@@ -608,15 +678,12 @@ delete_node() {
 
     if ! confirm_action "永久删除端口为 $del_port 的节点"; then pause_for_enter; return; fi
     
-    local deleted=0
-    
     if [ -f "/usr/local/etc/xray/config.json" ]; then
         if jq -e ".inbounds[] | select(.port == $del_port)" /usr/local/etc/xray/config.json > /dev/null 2>&1; then
             jq "del(.inbounds[] | select(.port == $del_port))" /usr/local/etc/xray/config.json > /tmp/xray_tmp.json
             mv /tmp/xray_tmp.json /usr/local/etc/xray/config.json
             systemctl restart xray
             echo -e "${GREEN}✅ 已成功移除 Xray 中占用端口 $del_port 的节点配置！${NC}"
-            deleted=1
         fi
     fi
     
@@ -626,8 +693,12 @@ delete_node() {
             mv /tmp/sb_tmp.json /etc/sing-box/config.json
             systemctl restart sing-box
             echo -e "${GREEN}✅ 已成功移除 Sing-box 中占用端口 $del_port 的节点配置！${NC}"
-            deleted=1
         fi
+    fi
+    
+    # 同步清理保存的链接
+    if [ -f "$NODE_RECORD_FILE" ]; then
+        sed -i "/端口:${del_port} /d" "$NODE_RECORD_FILE" 2>/dev/null
     fi
     
     pause_for_enter
@@ -733,7 +804,11 @@ install_reality_node() {
     
     if [ "$SERVICE_STATUS" == "active" ]; then
         echo -e "\n${GREEN}🎉 VLESS-Reality 节点成功部署于 ${CORE_NAME}！${NC}"
-        echo -e "${CYAN}vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI_DOMAIN}&fp=chrome&pbk=${PUB}&sid=${SHORT_ID}&type=tcp#${CORE_NAME}-Reality${NC}\n"
+        LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI_DOMAIN}&fp=chrome&pbk=${PUB}&sid=${SHORT_ID}&type=tcp#${CORE_NAME}-Reality"
+        echo -e "${CYAN}${LINK}${NC}\n"
+        echo -e "${YELLOW}>>> 扫描下方二维码快速导入节点：${NC}"
+        qrencode -t ANSIUTF8 "$LINK"
+        echo "${CORE_NAME}-Reality | 端口:${PORT} | ${LINK}" >> "$NODE_RECORD_FILE"
     else
         echo -e "\n${RED}[错误] 启动失败，请检查端口冲突。${NC}"
     fi
@@ -753,7 +828,6 @@ install_ws_tls_node() {
             continue
         fi
         
-        # 【修复 5：完美兼容 IPv4 / IPv6 的地址提取】
         DOMAIN_IP=$(ping -c 1 -n "$DOMAIN" 2>/dev/null | head -n 1 | awk -F '[()]' '{print $2}')
         break
     done
@@ -787,7 +861,6 @@ install_ws_tls_node() {
         break
     done
     
-    # 【新增功能 1：双轨制证书申请模式选择】
     echo -e "\n${CYAN}>>> 证书申请模式选择${NC}"
     echo -e "  ${GREEN}1.${NC} 【推荐】我已开启 CDN (小黄云) -> 使用 Cloudflare API 申请证书 (无视 CDN，自动续签)"
     echo -e "  ${GREEN}2.${NC} 【常规】我未开启 CDN (真实 IP) -> 使用常规 80 端口申请证书"
@@ -830,7 +903,6 @@ install_ws_tls_node() {
     
     echo -e "\n${CYAN}>>> 正在检查并申请 SSL 证书，请耐心等待...${NC}"
     
-    # 【新增功能：智能复用检测】检查本机是否已存在该域名的有效证书
     if /root/.acme.sh/acme.sh --list | grep -q "$DOMAIN"; then
         echo -e "${GREEN}✅ 检测到本机已存在 [$DOMAIN] 的有效证书，触发自动复用机制！${NC}"
         CERT_RES=0
@@ -841,15 +913,20 @@ install_ws_tls_node() {
         else
             echo -e "${YELLOW}[提醒] 您选择了常规 80 端口申请。若部署后在此域名开启 CDN (小黄云)，证书将在 3 个月后无法自动续期！${NC}"
             if ss -tulpn | grep -q ":80 "; then
-                echo -e "${YELLOW}[警告] 80 端口被占用，正在尝试临时释放...${NC}"
-                fuser -k 80/tcp > /dev/null 2>&1
+                echo -e "${YELLOW}[警告] 80 端口被占用！常规证书申请需要使用 80 端口。${NC}"
+                read -r -p "▶ 是否强制结束占用 80 端口的进程？(y/n, 默认 n): " kill_80
+                kill_80="${kill_80// /}"
+                if [[ "$kill_80" =~ ^[yY]$ ]]; then
+                    fuser -k 80/tcp > /dev/null 2>&1
+                else
+                    echo -e "${RED}[提示] 未释放 80 端口，证书申请极有可能失败！${NC}"
+                fi
             fi
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
             CERT_RES=$?
         fi
     fi
 
-    # 【修复：兼容状态码 2】acme.sh 返回 0 (成功) 或 2 (跳过/未改变) 都算通过
     if [ "$CERT_RES" -ne 0 ] && [ "$CERT_RES" -ne 2 ]; then
         echo -e "\n${RED}[错误] 证书申请失败！请检查域名解析、CDN 设置或 API Token 是否正确。部署已中止。${NC}"
         pause_for_enter
@@ -868,18 +945,22 @@ install_ws_tls_node() {
         NEW_INBOUND='{"port":'$WS_PORT',"protocol":"vless","settings":{"clients":[{"id":"'$UUID'"}],"decryption":"none"},"streamSettings":{"network":"ws","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"'$CERT_DIR'/fullchain.pem","keyFile":"'$CERT_DIR'/privkey.pem"}]},"wsSettings":{"path":"'$WSPATH'"}}}'
         bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1
         append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$WS_PORT" "Xray"
-        systemctl restart xray; SERVICE_STATUS=$(systemctl is-active xray)
+        systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray)
     else
         CORE_NAME="Sing-box"
         NEW_INBOUND='{"type":"vless","listen":"::","listen_port":'$WS_PORT',"users":[{"uuid":"'$UUID'"}],"tls":{"enabled":true,"server_name":"'$DOMAIN'","certificate_path":"'$CERT_DIR'/fullchain.pem","key_path":"'$CERT_DIR'/privkey.pem"},"transport":{"type":"ws","path":"'$WSPATH'"}}'
         bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1
         append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$WS_PORT" "Sing-box"
-        systemctl restart sing-box; SERVICE_STATUS=$(systemctl is-active sing-box)
+        systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box)
     fi
     
     if [ "$SERVICE_STATUS" == "active" ]; then
         echo -e "\n${GREEN}🎉 VLESS-WS-TLS 节点成功部署于 ${CORE_NAME}！${NC}"
-        echo -e "${CYAN}vless://${UUID}@${DOMAIN}:${WS_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${WSPATH}#${CORE_NAME}-WS-TLS${NC}\n"
+        LINK="vless://${UUID}@${DOMAIN}:${WS_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${WSPATH}#${CORE_NAME}-WS-TLS"
+        echo -e "${CYAN}${LINK}${NC}\n"
+        echo -e "${YELLOW}>>> 扫描下方二维码快速导入节点：${NC}"
+        qrencode -t ANSIUTF8 "$LINK"
+        echo "${CORE_NAME}-WS-TLS | 端口:${WS_PORT} | ${LINK}" >> "$NODE_RECORD_FILE"
     else
         echo -e "\n${RED}[错误] 启动失败，请检查端口冲突。${NC}"
     fi
@@ -983,8 +1064,14 @@ install_hy2_node() {
         else
             echo -e "${YELLOW}[提醒] 您选择了常规 80 端口申请。若部署后在此域名开启 CDN (小黄云)，证书将在 3 个月后无法自动续期！${NC}"
             if ss -tulpn | grep -q ":80 "; then
-                echo -e "${YELLOW}[警告] 80 端口被占用，正在尝试临时释放...${NC}"
-                fuser -k 80/tcp > /dev/null 2>&1
+                echo -e "${YELLOW}[警告] 80 端口被占用！常规证书申请需要使用 80 端口。${NC}"
+                read -r -p "▶ 是否强制结束占用 80 端口的进程？(y/n, 默认 n): " kill_80
+                kill_80="${kill_80// /}"
+                if [[ "$kill_80" =~ ^[yY]$ ]]; then
+                    fuser -k 80/tcp > /dev/null 2>&1
+                else
+                    echo -e "${RED}[提示] 未释放 80 端口，证书申请极有可能失败！${NC}"
+                fi
             fi
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
             CERT_RES=$?
@@ -1009,18 +1096,22 @@ install_hy2_node() {
         NEW_INBOUND='{"port":'$HY2_PORT',"protocol":"hysteria","settings":{"clients":[{"auth":"'$HY2_PASS'"}]},"streamSettings":{"network":"hysteria","security":"tls","hysteriaSettings":{"version":2,"congestion":{"ignoreClientBandwidth":false}},"tlsSettings":{"serverName":"'$DOMAIN'","alpn":["h3"],"certificates":[{"certificateFile":"'$CERT_DIR'/fullchain.pem","keyFile":"'$CERT_DIR'/privkey.pem"}]}}}'
         bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1
         append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$HY2_PORT" "Xray"
-        systemctl restart xray; SERVICE_STATUS=$(systemctl is-active xray)
+        systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray)
     else
         CORE_NAME="Sing-box"
         NEW_INBOUND='{"type":"hysteria2","listen":"::","listen_port":'$HY2_PORT',"users":[{"password":"'$HY2_PASS'"}],"tls":{"enabled":true,"server_name":"'$DOMAIN'","certificate_path":"'$CERT_DIR'/fullchain.pem","key_path":"'$CERT_DIR'/privkey.pem"}}'
         bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1
         append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$HY2_PORT" "Sing-box"
-        systemctl restart sing-box; SERVICE_STATUS=$(systemctl is-active sing-box)
+        systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box)
     fi
     
     if [ "$SERVICE_STATUS" == "active" ]; then
         echo -e "\n${GREEN}🎉 Hysteria2 节点成功部署于 ${CORE_NAME}！${NC}"
-        echo -e "${CYAN}hy2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}?sni=${DOMAIN}&insecure=0#${CORE_NAME}-Hys2${NC}\n"
+        LINK="hy2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}?sni=${DOMAIN}&insecure=0#${CORE_NAME}-Hys2"
+        echo -e "${CYAN}${LINK}${NC}\n"
+        echo -e "${YELLOW}>>> 扫描下方二维码快速导入节点：${NC}"
+        qrencode -t ANSIUTF8 "$LINK"
+        echo "${CORE_NAME}-Hys2 | 端口:${HY2_PORT} | ${LINK}" >> "$NODE_RECORD_FILE"
     else
         echo -e "\n${RED}[错误] 启动失败，请检查端口冲突。${NC}"
     fi
@@ -1054,14 +1145,14 @@ manage_ufw() {
         echo -e "  ${GREEN}1.${NC} 查看当前防火墙状态与已放行端口"
         echo -e "  ${GREEN}2.${NC} 放行指定新端口 (TCP/UDP)"
         echo -e "  ${GREEN}3.${NC} 删除某个端口规则"
-        echo -e "  ${GREEN}4.${NC} 开启防火墙 (系统会自动防呆，强制放行 22 SSH端口)"
+        echo -e "  ${GREEN}4.${NC} 开启防火墙 (系统会自动防呆，强制放行当前 SSH 端口)"
         echo -e "  ${GREEN}5.${NC} 彻底关闭防火墙"
         echo -e "  ${GREEN}0.${NC} 返回主菜单"
         print_separator
         echo ""
         read -r -p "▶ 请选择操作 [0-5]: " ufw_opt
         ufw_opt="${ufw_opt// /}"
-        
+    
         case $ufw_opt in
             1) 
                 echo -e "\n${CYAN}>>> 防火墙状态：${NC}"
@@ -1093,9 +1184,14 @@ manage_ufw() {
                 pause_for_enter
                 ;;
             4)
-                if ! confirm_action "开启防火墙并强制放行 22 端口"; then continue; fi
-                echo -e "\n${YELLOW}为防止你与服务器失联，正在强制放行 22 端口...${NC}"
-                ufw allow 22/tcp
+                if ! confirm_action "开启防火墙并自动放行 SSH 端口"; then continue; fi
+                # 动态获取当前的 SSH 端口防失联
+                CURRENT_SSH_PORT=$(ss -tlnp | grep -w sshd | awk '{print $4}' | awk -F':' '{print $NF}' | head -n 1)
+                [ -z "$CURRENT_SSH_PORT" ] && CURRENT_SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}')
+                [ -z "$CURRENT_SSH_PORT" ] && CURRENT_SSH_PORT=22
+                
+                echo -e "\n${YELLOW}为防止你与服务器失联，正在强制放行当前 SSH 端口 ($CURRENT_SSH_PORT)...${NC}"
+                ufw allow "$CURRENT_SSH_PORT"/tcp
                 ufw --force enable
                 echo -e "${GREEN}✅ 防火墙已成功开启！${NC}"
                 pause_for_enter
@@ -1118,11 +1214,13 @@ manage_ufw() {
 
 uninstall_vpsbox() {
     print_separator
-    echo -e "${YELLOW}【警告】此操作将彻底删除 VPSBox 的快捷命令及本地备份目录。${NC}"
+    echo -e "${YELLOW}【警告】此操作将彻底删除 VPSBox 的快捷命令、本地备份及所有缓存日志。${NC}"
     if ! confirm_action "彻底卸载 VPSBox"; then return; fi
     
     rm -f /usr/local/bin/vpsbox
     rm -rf /etc/vpsbox_backups
+    rm -f "$NODE_RECORD_FILE"
+    rm -f "$INSTALL_LOG"
     echo -e "\n${GREEN}[成功] VPSBox 已彻底卸载！系统已无任何残留，期待与您下次相遇！${NC}"
     exit 0
 }
@@ -1135,7 +1233,7 @@ while true; do
     clear
     echo ""
     print_divider
-    echo -e "${PURPLE}           🌟 VPS Box 全能服务器管家与部署工具箱 v2.0.1 🌟${NC}"
+    echo -e "${PURPLE}           🌟 VPS Box 全能服务器管家与部署工具箱 v2.1.0 🌟${NC}"
     print_divider
     
     # 顶部基础信息 (无图标)
@@ -1161,7 +1259,7 @@ while true; do
     echo -e "  ${GREEN}14.${NC} 部署 VLESS-Reality            ${YELLOW}(直连低延迟 / 强力防封锁)${NC}"
     echo -e "  ${GREEN}15.${NC} 部署 VLESS-WS-TLS             ${YELLOW}(套 CDN 优选 IP / 拯救被墙机器)${NC}"
     echo -e "  ${GREEN}16.${NC} 部署 Hysteria2                ${YELLOW}(UDP 暴力发包 / 抢占高带宽)${NC}"
-    echo -e "  ${GREEN}17.${NC} 查看当前已部署的节点状态      ${GREEN}18.${NC} 删除指定的已部署节点"
+    echo -e "  ${GREEN}17.${NC} 查看已部署节点与备份管理      ${GREEN}18.${NC} 删除指定的已部署节点"
     
     echo -e "\n  ${CYAN}【附加实用工具与安全拓展】${NC}"
     echo -e "  ${GREEN}19.${NC} Cloudflare WARP 一键解锁      ${YELLOW}(获取干净 IP / 规避验证码)${NC}"
@@ -1173,7 +1271,7 @@ while true; do
     print_divider
     echo ""
     read -r -p "▶ 请输入选择 [0-20, 99]: " OPTION
-    OPTION="${OPTION// /}" # iPad空格剔除
+    OPTION="${OPTION// /}" 
     
     case $OPTION in
         1) system_update ;;
