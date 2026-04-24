@@ -778,8 +778,8 @@ view_deployed_nodes() {
         fi
         
         if [ -f "/etc/sing-box/config.json" ] && grep -q "inbounds" "/etc/sing-box/config.json"; then
-            # 修复：安全解析 jq 链式调用，防止空指针抛出致命错误
-            jq -r '.inbounds[] | "【Sing-box】 端口: \(.listen_port) | 协议: \(.type) | 网络: \(if .type == "hysteria2" then "udp" else (.transport.type // "tcp") end) | 安全: \(if (.tls.reality.enabled // false) then "reality" elif (.tls.enabled // false) then "tls" else "none" end)"' /etc/sing-box/config.json 2>/dev/null || echo -e "${YELLOW}配置文件解析失败。${NC}"
+            # 完美修复：利用 jq 安全导航符 ?. 防止极端空指针崩溃
+            jq -r '.inbounds[] | "【Sing-box】 端口: \(.listen_port) | 协议: \(.type) | 网络: \(if .type == "hysteria2" then "udp" else (.transport.type // "tcp") end) | 安全: \(if (.tls?.reality?.enabled? // false) then "reality" elif (.tls?.enabled? // false) then "tls" else "none" end)"' /etc/sing-box/config.json 2>/dev/null || echo -e "${YELLOW}配置文件解析失败。${NC}"
         else
             echo -e "${YELLOW}未检测到 Sing-box 节点配置。${NC}"
         fi
@@ -908,7 +908,6 @@ delete_node() {
     
     if [ -f "/usr/local/etc/xray/config.json" ]; then
         if jq -e ".inbounds[] | select(.port == $del_port)" /usr/local/etc/xray/config.json > /dev/null 2>&1; then
-            # 修复：安全检查输出，防止格式错误导致清空配置
             jq "del(.inbounds[] | select(.port == $del_port))" /usr/local/etc/xray/config.json > /tmp/xray_tmp.json
             if [ -s /tmp/xray_tmp.json ]; then
                 mv /tmp/xray_tmp.json /usr/local/etc/xray/config.json
@@ -1129,8 +1128,9 @@ install_ws_tls_node() {
     if ! confirm_action "开始部署 WS+TLS 节点并申请证书"; then pause_for_enter; return; fi
     install_dependencies
     
-    [ ! -d "/root/.acme.sh" ] && curl https://get.acme.sh | sh >/dev/null 2>&1
-    # 修复：验证 acme 脚本是否真装上了
+    # 完美修复：最新版本 Acme.sh 强制要求提供邮箱参数，否则报错无法安装
+    [ ! -d "/root/.acme.sh" ] && curl https://get.acme.sh | sh -s email=dummy@vpsbox.com >/dev/null 2>&1
+    
     if [ ! -f "/root/.acme.sh/acme.sh" ]; then
         echo -e "\n${RED}[错误] Acme.sh 证书脚本安装失败！可能是网络被阻断。${NC}"
         pause_for_enter
@@ -1152,7 +1152,6 @@ install_ws_tls_node() {
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf -k ec-256
             CERT_RES=$?
         else
-            # 修复：80 端口占用智能感知与安全恢复逻辑
             if ss -tlnp | grep -q "\b:80\b"; then
                 PORT_80_SERVICE=$(ss -tlnp | grep "\b:80\b" | awk -F'"' '{print $2}' | grep -v "^$" | head -n 1)
                 [ -z "$PORT_80_SERVICE" ] && PORT_80_SERVICE=$(fuser 80/tcp 2>/dev/null | awk '{print $1}')
@@ -1168,6 +1167,8 @@ install_ws_tls_node() {
                     pause_for_enter
                     return
                 fi
+                # 完美修复：先用 systemctl 停用服务防止被守护进程秒拉活，再用 fuser 暴力补刀
+                systemctl stop "$PORT_80_SERVICE" > /dev/null 2>&1
                 fuser -k 80/tcp > /dev/null 2>&1
                 sleep 2
             fi
@@ -1177,7 +1178,7 @@ install_ws_tls_node() {
             
             if [ -n "$PORT_80_SERVICE" ] && [ "$PORT_80_SERVICE" != "未知程序" ]; then
                 echo -e "${CYAN}>>> 正在尝试为您恢复原本的 [${PORT_80_SERVICE}] 服务...${NC}"
-                systemctl restart "$PORT_80_SERVICE" >/dev/null 2>&1 || echo -e "${RED}[注意] ${PORT_80_SERVICE} 恢复失败，请稍后手动检查。${NC}"
+                systemctl start "$PORT_80_SERVICE" >/dev/null 2>&1 || echo -e "${RED}[注意] ${PORT_80_SERVICE} 恢复失败，请稍后手动检查。${NC}"
             fi
         fi
     fi
@@ -1284,8 +1285,8 @@ install_hy2_node() {
     if ! confirm_action "开始部署 Hysteria2 节点并申请证书"; then pause_for_enter; return; fi
     install_dependencies
     
-    [ ! -d "/root/.acme.sh" ] && curl https://get.acme.sh | sh >/dev/null 2>&1
-    # 修复：验证 acme 脚本是否真装上了
+    [ ! -d "/root/.acme.sh" ] && curl https://get.acme.sh | sh -s email=dummy@vpsbox.com >/dev/null 2>&1
+    
     if [ ! -f "/root/.acme.sh/acme.sh" ]; then
         echo -e "\n${RED}[错误] Acme.sh 证书脚本安装失败！可能是网络被阻断。${NC}"
         pause_for_enter
@@ -1307,7 +1308,6 @@ install_hy2_node() {
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf -k ec-256
             CERT_RES=$?
         else
-            # 修复：80 端口占用智能感知与安全恢复逻辑
             if ss -tlnp | grep -q "\b:80\b"; then
                 PORT_80_SERVICE=$(ss -tlnp | grep "\b:80\b" | awk -F'"' '{print $2}' | grep -v "^$" | head -n 1)
                 [ -z "$PORT_80_SERVICE" ] && PORT_80_SERVICE=$(fuser 80/tcp 2>/dev/null | awk '{print $1}')
@@ -1323,6 +1323,7 @@ install_hy2_node() {
                     pause_for_enter
                     return
                 fi
+                systemctl stop "$PORT_80_SERVICE" > /dev/null 2>&1
                 fuser -k 80/tcp > /dev/null 2>&1
                 sleep 2
             fi
@@ -1332,7 +1333,7 @@ install_hy2_node() {
             
             if [ -n "$PORT_80_SERVICE" ] && [ "$PORT_80_SERVICE" != "未知程序" ]; then
                 echo -e "${CYAN}>>> 正在尝试为您恢复原本的 [${PORT_80_SERVICE}] 服务...${NC}"
-                systemctl restart "$PORT_80_SERVICE" >/dev/null 2>&1 || echo -e "${RED}[注意] ${PORT_80_SERVICE} 恢复失败，请稍后手动检查。${NC}"
+                systemctl start "$PORT_80_SERVICE" >/dev/null 2>&1 || echo -e "${RED}[注意] ${PORT_80_SERVICE} 恢复失败，请稍后手动检查。${NC}"
             fi
         fi
     fi
