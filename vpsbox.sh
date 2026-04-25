@@ -198,6 +198,7 @@ manage_ssh_security() {
                         continue
                     fi
                     
+        
                     if ! confirm_action "导入此 SSH 公钥"; then break; fi
 
                     mkdir -p ~/.ssh
@@ -207,16 +208,19 @@ manage_ssh_security() {
                         echo -e "\n${YELLOW}[发现] 系统中已存在其他 SSH 密钥记录。${NC}"
                         read -r -p "▶ 是否清空旧密钥并覆盖？(y-覆盖清空 / n-保留追加, 默认 n): " overwrite_opt
                         overwrite_opt="${overwrite_opt// /}"
+            
                         if [[ "$overwrite_opt" =~ ^[yY]$ ]]; then
                             > ~/.ssh/authorized_keys
                             echo -e "${CYAN}>>> 已清空历史废弃密钥。${NC}"
                         fi
+                
                     fi
 
                     echo "$pub_key" >> ~/.ssh/authorized_keys
                     chmod 600 ~/.ssh/authorized_keys
                     
                     echo -e "\n${GREEN}✅ 密钥已成功添加！请先测试使用密钥登录，再关闭密码登录功能。${NC}"
+        
                     pause_for_enter
                     break
                 done
@@ -324,7 +328,8 @@ manage_swap() {
         
         case $swap_opt in
             1)
-               while true; do
+ 
+              while true; do
                     read -r -p "▶ 请输入 Swap 大小 (单位 MB，例如 1024): " input_size
                     input_size="${input_size// /}"
                     if [[ "$input_size" =~ ^[0-9]+$ ]]; then
@@ -332,13 +337,15 @@ manage_swap() {
                     else
                         echo -e "${RED}[错误] 输入无效，请输入纯数字。${NC}"
                     fi
-               done
+         
+              done
                 if ! confirm_action "设置 ${input_size}MB 的 Swap"; then return; fi
                 echo -e "\n${CYAN}>>> 正在配置 ${input_size}MB Swap，请稍候...${NC}"
                 swapoff -a
                 rm -f /swapfile
                 dd if=/dev/zero of=/swapfile bs=1M count=$input_size status=progress
                 
+
                 chmod 600 /swapfile
                 mkswap /swapfile
                 swapon /swapfile
@@ -347,7 +354,8 @@ manage_swap() {
                 fi
                 echo -e "${GREEN}✅ Swap 设置成功！${NC}"
                 return
-                ;;
+                
+;;
             2)
                 if ! confirm_action "关闭并删除现有 Swap"; then return; fi
                 swapoff -a
@@ -355,9 +363,10 @@ manage_swap() {
                 sed -i '/\/swapfile/d' /etc/fstab
                 echo -e "\n${GREEN}✅ Swap 已彻底关闭并清理！${NC}"
                 return
-                ;;
+     
+            ;;
             0) return ;;
-            *) echo -e "\n${RED}[错误] 输入无效！请输入 0、1 或 2 进行选择。${NC}\n" ;;
+*) echo -e "\n${RED}[错误] 输入无效！请输入 0、1 或 2 进行选择。${NC}\n" ;;
         esac
     done
 }
@@ -429,6 +438,7 @@ EOF
                 
                 # 直接从 Ubuntu 官方密钥服务器拉取 XanMod 的数字签名公钥，彻底绕过 Cloudflare 拦截
                 gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 86F7D09EE734E623 > /dev/null 2>&1
+        
                 gpg --export 86F7D09EE734E623 > /usr/share/keyrings/xanmod-archive-keyring.gpg
                 
                 # 严格检查密钥文件是否下载成功（文件大小不为0）
@@ -455,6 +465,7 @@ EOF
                     update-grub
                     echo -e "\n${GREEN}🎉 BBRv3 核心部署完毕！需要重启后生效。${NC}"
                     
+          
                     # 拦截强制重启，将决定权交给用户
                     read -r -p "▶ 是否立即重启服务器？(y/n, 默认 n): " do_reboot
                     if [[ "${do_reboot// /}" =~ ^[yY]$ ]]; then
@@ -464,7 +475,8 @@ EOF
                         echo -e "${YELLOW}请记得稍后手动执行 reboot 命令使新内核生效。${NC}"
                         sleep 2
                     fi
-                else
+       
+                 else
                     echo -e "\n${RED}[错误] 内核安装失败！请查看上方 apt 的具体报错。${NC}"
                     sleep 3
                 fi
@@ -478,6 +490,7 @@ EOF
                     else
                         apt install -y linux-image-amd64
                     fi
+      
                 fi
                 echo -e "\n${CYAN}>>> 正在清理内核文件...${NC}"
                 apt purge -y "^linux-image.*xanmod.*" "^linux-headers.*xanmod.*"
@@ -487,7 +500,7 @@ EOF
                 sleep 3; reboot
                 ;;
             0) break ;;
-            *) echo -e "\n${RED}[提示] 编号错误！${NC}"; sleep 1 ;;
+*) echo -e "\n${RED}[提示] 编号错误！${NC}"; sleep 1 ;;
         esac
     done
 }
@@ -495,21 +508,9 @@ EOF
 apply_tuning() {
     clear; print_divider; echo -e "       动态 TCP 自动调优注入 (VPSBox 核心)    "; print_divider
     echo -e "${YELLOW}【模式说明】${NC}"
-    echo -e "  ${GREEN}1. 正常模式${NC}: 科学稳健，结合你的带宽和延迟智能计算 BDP，适合日常建站、常规代理。"
-    echo -e "  ${RED}2. 激进模式${NC}: Beta特性，无视慢启动，极致压榨带宽，高并发利器。${YELLOW}(警告：可能增加丢包率与内存消耗)${NC}"
+    echo -e "  基于 Omnitt 高级 BDP 算法，智能感知硬件内存，自适应生成极致 TCP 参数。"
     print_separator
     
-    # 1. 模式选择
-    local mode_choice
-    while true; do
-        read -r -p "▶ 请选择调优模式 [1-正常 / 2-激进, 输入 0 取消]: " mode_choice
-        mode_choice="${mode_choice// /}"
-        if [ "$mode_choice" == "0" ]; then return; fi
-        if [[ "$mode_choice" == "1" || "$mode_choice" == "2" ]]; then break; fi
-        echo -e "${RED}[错误] 请输入 1 或 2！${NC}"
-    done
-
-    # 2. 参数收集 (带有防呆检测，严格要求手动输入)
     local local_bw server_bw latency ramp_up
     while true; do
         read -r -p "▶ 请输入本地/客户端下行带宽 (Mbps, 例如 500): " local_bw
@@ -529,190 +530,133 @@ apply_tuning() {
         echo -e " ${GREEN}0.5 - 0.6${NC}: 平稳传输 (适合日常建站，不抢占资源)"
         echo -e " ${YELLOW}0.7 - 0.9${NC}: 快速响应 (推荐，自动关闭慢启动，看剧极速)"
         echo -e " ${RED}1.0      ${NC}: 极限跑分 (双倍 BDP 冗余，强力压榨带宽)"
-        read -r -p "▶ 请输入爬升曲线调节 (0.1 - 1.0): " ramp_up
-     
-        if awk -v r="${ramp_up// /}" 'BEGIN{if(r>=0.1 && r<=1.0) exit 0; else exit 1}'; then
+        read -r -p "▶ 请输入爬升曲线调节 (0.1 - 1.0) [默认 0.79]: " ramp_up
+        ramp_up="${ramp_up// /}"
+        [ -z "$ramp_up" ] && ramp_up="0.79"
+        if awk -v r="$ramp_up" 'BEGIN{if(r>=0.1 && r<=1.0) exit 0; else exit 1}'; then
             break
         fi
         echo -e "${RED}[错误] 请输入 0.1 到 1.0 之间的有效数字！${NC}"
     done
 
-    # 3. 自动探测内存
     local w_ram=$(free -m | awk '/^Mem:/{print $2}')
     if [ -z "$w_ram" ] || [ "$w_ram" -le 0 ]; then w_ram=1024; fi
     echo -e "\n${CYAN}>>> 系统自动探测内存: ${GREEN}${w_ram} MB${NC}"
 
-    # 4. 动态核心计算 (全逻辑重构版)
-    eval $(awk -v mode="$mode_choice" -v lbw="$local_bw" -v sbw="$server_bw" -v lat="$latency" -v ramp="$ramp_up" -v w="$w_ram" '
-    function min(a, b) { return a < b ? a : b }
-    function max(a, b) { return a > b ? a : b }
-    BEGIN {
-        bw = min(lbw, sbw)
-        init_win = int(4096 + (65536 - 4096) * ramp)
-        def_win = int(65536 + (524288 - 65536) * ramp)
-        slow_start = (ramp >= 0.7) ? 0 : 1
-
-        gc1 = (w <= 512) ? 256 : 512
-        gc2 = (w <= 512) ? 1024 : 2048
-        gc3 = (w <= 512) ? 2048 : 4096
-        
-        # 全局内存安全墙 (单连接最大允许占用物理内存的 1/16，防止 OOM)
-        global_ram_cap = (w * 1048576) / 16.0 
-
-        if (mode == "1") {
-            bdp = (bw * 125000) * (lat / 1000.0)
-            
-            # 修复1: 将曲线完美融入最大缓冲区，0.7 对应 1.7 倍 BDP，1.0 对应 2 倍 BDP
-            max_buf = int(max(bdp * (1.0 + ramp), 16777216))
-            # 增加兜底保护：即使填写 1.0 拉满，也绝不能超过全局内存安全墙
-            max_buf = int(min(max_buf, global_ram_cap))
-            
-            t_mem = int(384*w) " " int(512*w) " " int(768*w)
-            m_free = int(max(131072, 32*w))
-
-            printf "INIT_WIN=%d\nDEF_WIN=%d\nMAX_BUF=%d\nTCP_MEM=\"%s\"\nSLOW_START=%d\nMIN_FREE=%d\n", init_win, def_win, max_buf, t_mem, slow_start, m_free
-        } else {
-            M = bw * 125000
-            b = lat
-            bdp_mult = min(12.0, 6.0 + (w / 1024.0))
-            ram_cap = 1024.0 * w * 153.6
-            
-            # 修复2: 激进模式强制引入用户填写的 ramp 乘数
-            x_var = int(max(min(M * b / 1000.0 * bdp_mult * ramp, ram_cap), 4194304))
-            # 同样受到全局安全墙保护
-            x_var = int(min(x_var, global_ram_cap))
-            
-            k = min(b / 100.0, 5.0)
-            q = min(M / 1048576.0, 15000.0)
-            S = min(6 * w, 24576)
-
-            nd_max = int(min(S, 6000 + q * k))
-            t_max_syn = int(min(S / 2.0, 3000 + (q * k) / 2.0))
-            m_orphans = (w <= 256) ? 16384 : 32768
-            
-            # 修复3: 根据当前填写的延迟，智能分配忙轮询策略
-            if (b <= 50) {
-                b_read = 100;
-                b_poll = 100
-            } else if (b <= 150) {
-                b_read = 50;
-                b_poll = 50
-            } else {
-                b_read = 0;
-                b_poll = 0
-            }
-            
-            t_mem = int(512*w) " " int(768*w) " " int(1024*w)
-
-            printf "X_VAR=%d\nND_MAX=%d\nT_MAX_SYN=%d\nM_ORPHANS=%d\nB_READ=%d\nB_POLL=%d\nTCP_MEM=\"%s\"\n", x_var, nd_max, t_max_syn, m_orphans, b_read, b_poll, t_mem
-        }
-        printf "GC1=%d\nGC2=%d\nGC3=%d\n", gc1, gc2, gc3
-    }')
-
-    # 5. 确认执行
-    
     echo -e "${CYAN}>>> 动态参数计算完毕！准备注入底层。${NC}"
     if ! confirm_action "执行并使上述 TCP 调优参数生效"; then pause_for_enter; return; fi
     
-    # 备份原有参数
     read -r -p "▶ 是否在调优前备份当前参数？(y/n, 默认 y): " NEED_BACKUP
     NEED_BACKUP="${NEED_BACKUP// /}"
     [[ -z "$NEED_BACKUP" || "$NEED_BACKUP" =~ ^[yY]$ ]] && backup_config_silently
 
-    # 6. 生成配置文件
-    cat > "$CUSTOM_CONF" <<EOF
+    echo -e "\n${CYAN}>>> 正在运行高级引擎生成配置...${NC}"
+    python3 -c '
+import math, sys
+e, n, r, _ram, f = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), float(sys.argv[5])
+def clamp(val, min_val, max_val): return max(min_val, min(val, max_val))
+def log_curve(val, base=math.e, scale=1.0): return scale * math.log(val * (base - 1) + 1) / math.log(base)
+
+F = clamp(r / 40, 1, 5)
+T = clamp(2 * math.sqrt(e / n) * F, 1.5, 5)
+base_bytes = math.floor(1024 * min(e * T, 2 * n) * 1024 / 8)
+
+curve_factor = log_curve(clamp(f, 0, 1))
+B = e / n
+N = 0.06 if B > 100 else (0.12 if B > 50 else (0.2 if B > 20 else (0.3 if B > 10 else (0.5 if B > 5 else (0.7 if B > 2 else 1.0)))))
+
+G = math.ceil(base_bytes * r / 1000)
+O = max(G, 131072 if _ram <= 512 else (262144 if _ram <= 1024 else 524288))
+L = max(O, base_bytes * r / (1200 if _ram <= 512 else (1000 if _ram <= 1024 else 800)))
+
+V = math.ceil(base_bytes * r / 1000)
+max_mem_bytes = _ram * 1024 * 1024 * 0.125
+H = min(math.ceil(2 * curve_factor * N * V), max_mem_bytes)
+W = max(H, math.ceil(0.5 * V)) if r > 500 else H
+
+K_mult = 1.5 if _ram <= 512 else (1.8 if _ram <= 1024 else 2.0)
+K = clamp(K_mult * F, 3 if _ram <= 512 else (4 if _ram <= 1024 else 5), 6 if _ram <= 512 else (8 if _ram <= 1024 else 10))
+Q = K 
+
+X = [32768, 262144, min(math.floor(L * Q), W)]
+Y = [32768, 262144, min(math.floor(L * K), W)]
+
+J = math.ceil(min(3 * max(50, base_bytes / 131072), 20000))
+Z = 0.8 if _ram <= 512 else (1.0 if _ram <= 1024 else (1.3 if _ram <= 2048 else 1.5))
+
+ee = clamp(math.floor(0.15 * J * Z), 2560, 8192 if _ram <= 512 else 16384)
+et = clamp(math.floor(0.30 * J * Z), 8192, 16384 if _ram <= 512 else 32768)
+en = clamp(math.floor(0.60 * J * Z), 8192, 32768 if _ram <= 512 else 65536)
+
+mfk_ratio = 0.02 if _ram <= 512 else (0.025 if _ram <= 1024 else (0.03 if _ram <= 2048 else 0.035))
+mfk_val = clamp(math.floor(1024 * _ram * mfk_ratio) + math.floor(0.6 * math.ceil(base_bytes / 1024)), 65536, 1048576)
+
+config_text = f"""# ==========================================
+# VPSBox 网络调优核心逻辑 (Omnitt 算法动态生成)
 # ==========================================
-# VPSBox 网络调优核心逻辑 (动态计算生成)
-# ==========================================
-net.ipv4.tcp_timestamps = 1
+kernel.pid_max = 65535
+kernel.panic = 1
+kernel.sysrq = 1
+kernel.core_pattern = core_%e
+kernel.printk = 3 4 1 3
+kernel.numa_balancing = 0
+kernel.sched_autogroup_enabled = 0
+vm.swappiness = 5
+vm.dirty_ratio = 5
+vm.dirty_background_ratio = 2
+vm.panic_on_oom = 1
+vm.overcommit_memory = 1
+vm.min_free_kbytes = {int(mfk_val)}
+vm.vfs_cache_pressure = 100
+vm.dirty_expire_centisecs = 3000
+vm.dirty_writeback_centisecs = 500
+net.core.default_qdisc = fq
+net.core.netdev_max_backlog = {int(et)}
+net.core.rmem_max = {int(W)}
+net.core.wmem_max = {int(W)}
+net.core.rmem_default = {int(X[1])}
+net.core.wmem_default = {int(Y[1])}
+net.core.somaxconn = {int(ee)}
+net.core.optmem_max = {int(math.floor(min(262144, L / 2)))}
 net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_timestamps = 1
 net.ipv4.tcp_tw_reuse = 1
-net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_fin_timeout = 30
-net.ipv4.tcp_keepalive_time = 1200
-net.ipv4.tcp_keepalive_intvl = 60
+net.ipv4.tcp_fin_timeout = 10
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_max_tw_buckets = 32768
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_fack = 1
+net.ipv4.tcp_rmem = {int(X[0])} {int(X[1])} {int(X[2])}
+net.ipv4.tcp_wmem = {int(Y[0])} {int(Y[1])} {int(Y[2])}
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_notsent_lowat = {int(math.floor(min(L / 2, 524288)))}
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_adv_win_scale = {int(max(2, math.ceil(F * 1.0)))}
+net.ipv4.tcp_moderate_rcvbuf = 1
+net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_max_syn_backlog = {int(en)}
+net.ipv4.tcp_max_orphans = {16384 if _ram <= 256 else 32768}
 net.ipv4.tcp_synack_retries = 2
 net.ipv4.tcp_syn_retries = 2
 net.ipv4.tcp_abort_on_overflow = 0
+net.ipv4.tcp_stdurg = 0
 net.ipv4.tcp_rfc1337 = 0
-net.ipv4.route.gc_timeout = 100
-net.ipv4.neigh.default.gc_stale_time = 120
-net.ipv4.neigh.default.gc_thresh1 = $GC1
-net.ipv4.neigh.default.gc_thresh2 = $GC2
-net.ipv4.neigh.default.gc_thresh3 = $GC3
+net.ipv4.tcp_syncookies = 1
 net.ipv4.ip_forward = 0
 net.ipv4.ip_local_port_range = 1024 65535
 net.ipv4.ip_no_pmtu_disc = 0
+net.ipv4.route.gc_timeout = 100
+net.ipv4.neigh.default.gc_stale_time = 120
+net.ipv4.neigh.default.gc_thresh3 = {2048 if _ram <= 512 else 4096}
+net.ipv4.neigh.default.gc_thresh2 = {1024 if _ram <= 512 else 2048}
+net.ipv4.neigh.default.gc_thresh1 = {256 if _ram <= 512 else 512}
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.default.accept_redirects = 0
-net.ipv4.conf.all.secure_redirects = 0
-net.ipv4.conf.default.secure_redirects = 0
-net.ipv4.conf.all.accept_source_route = 0
-net.ipv4.conf.default.accept_source_route = 0
-net.ipv4.conf.all.forwarding = 0
-net.ipv4.conf.default.forwarding = 0
-net.ipv4.icmp_echo_ignore_broadcasts = 1
-net.ipv4.icmp_ignore_bogus_error_responses = 1
-net.ipv4.conf.all.rp_filter = 1
-net.ipv4.conf.default.rp_filter = 1
-net.ipv4.conf.all.arp_announce = 2
-net.ipv4.conf.default.arp_announce = 2
-net.ipv4.conf.all.arp_ignore = 1
-net.ipv4.conf.default.arp_ignore = 1
-EOF
+"""
+print(config_text)
+    ' "$local_bw" "$server_bw" "$latency" "$w_ram" "$ramp_up" > "$CUSTOM_CONF"
 
-    if [ "$mode_choice" == "1" ]; then
-        cat >> "$CUSTOM_CONF" <<EOF
-# --- 正常模式 (爬升率: $ramp_up) ---
-net.core.rmem_max = $MAX_BUF
-net.core.wmem_max = $MAX_BUF
-net.core.rmem_default = $DEF_WIN
-net.core.wmem_default = $DEF_WIN
-net.ipv4.tcp_rmem = $INIT_WIN $DEF_WIN $MAX_BUF
-net.ipv4.tcp_wmem = $INIT_WIN $DEF_WIN $MAX_BUF
-net.ipv4.tcp_mem = $TCP_MEM
-net.ipv4.tcp_slow_start_after_idle = $SLOW_START
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
-net.ipv4.tcp_mtu_probing = 1
-vm.swappiness = 10
-vm.min_free_kbytes = $MIN_FREE
-net.ipv4.tcp_max_syn_backlog = 4096
-net.core.netdev_max_backlog = 5000
-net.core.somaxconn = 8192
-EOF
-    else
-        cat >> "$CUSTOM_CONF" <<EOF
-# --- 激进模式 (Extreme Beta - 爬升率: $ramp_up) ---
-net.core.rmem_max = $(( 2 * X_VAR ))
-net.core.wmem_max = $X_VAR
-net.core.rmem_default = 524288
-net.core.wmem_default = 524288
-net.ipv4.tcp_rmem = 65536 524288 $(( 2 * X_VAR ))
-net.ipv4.tcp_wmem = 65536 524288 $X_VAR
-net.ipv4.tcp_mem = $TCP_MEM
-net.core.netdev_max_backlog = $ND_MAX
-net.ipv4.tcp_max_syn_backlog = $T_MAX_SYN
-net.core.somaxconn = 32768
-net.ipv4.tcp_max_orphans = $M_ORPHANS
-net.ipv4.tcp_slow_start_after_idle = 0
-net.ipv4.tcp_notsent_lowat = 32768
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
-net.ipv4.tcp_mtu_probing = 2
-net.ipv4.tcp_window_scaling = 1
-net.ipv4.tcp_sack = 1
-net.ipv4.tcp_fack = 1
-vm.min_free_kbytes = $(( w_ram < 4096 ? 262144 : 64 * w_ram ))
-vm.swappiness = 1
-net.core.optmem_max = $(( w_ram < 1024 ? 163840 : 160 * w_ram ))
-kernel.sched_min_granularity_ns = 3000000
-net.core.busy_read = $B_READ
-net.core.busy_poll = $B_POLL
-EOF
-    fi
-
-    # 尝试加载 BBR 并应用配置
     modprobe tcp_bbr > /dev/null 2>&1
     sysctl -p "$CUSTOM_CONF" > /dev/null 2>&1
     
@@ -723,7 +667,8 @@ EOF
 
 backup_config_silently() {
     local ts=$(date +"%Y%m%d_%H%M%S")
-    sysctl -a --pattern net.ipv4.tcp | grep -E "rmem|wmem|congestion|sack" > "${BACKUP_DIR}/backup_${ts}.conf" 2>/dev/null
+    sysctl -a --pattern net.ipv4.tcp |
+grep -E "rmem|wmem|congestion|sack" > "${BACKUP_DIR}/backup_${ts}.conf" 2>/dev/null
     echo -e "${GREEN}✅ 参数已自动备份。${NC}"
 }
 
@@ -738,11 +683,13 @@ manage_backup() {
         read -r -p "▶ 请选择操作 [0-3]: " b_opt
         b_opt="${b_opt// /}"
         
-        case $b_opt in
+       
+ case $b_opt in
             1)
                 if ! confirm_action "备份当前网络参数"; then continue; fi
                 local ts=$(date +"%Y%m%d_%H%M%S")
-                sysctl -a --pattern net.ipv4.tcp | grep -E "rmem|wmem|congestion|sack" > "${BACKUP_DIR}/backup_${ts}.conf" 2>/dev/null
+                sysctl -a --pattern net.ipv4.tcp |
+grep -E "rmem|wmem|congestion|sack" > "${BACKUP_DIR}/backup_${ts}.conf" 2>/dev/null
                 echo -e "\n${GREEN}✅ TCP 参数备份成功！${NC}"
                 pause_for_enter
                 ;;
@@ -766,6 +713,7 @@ manage_backup() {
                         break
                     else
                         echo -e "${RED}[错误] 输入无效编号，请重新输入！${NC}"
+  
                     fi
                 done
                 ;;
@@ -781,7 +729,8 @@ manage_backup() {
                     read -r -p "▶ 请输入编号 (0取消): " del_opt
                     del_opt="${del_opt// /}"
                     
-                    if [ "$del_opt" == "0" ]; then break; fi
+       
+             if [ "$del_opt" == "0" ]; then break; fi
                     if [[ "$del_opt" =~ ^[0-9]+$ ]] && [ "$del_opt" -ge 1 ] && [ "$del_opt" -le "${#backups[@]}" ]; then
                         if ! confirm_action "永久删除此备份"; then break; fi
                         rm -f "${backups[$((del_opt-1))]}"; echo -e "\n${GREEN}✅ 记录已删除。${NC}"
@@ -794,12 +743,13 @@ manage_backup() {
                         break
                     else
                         echo -e "${RED}[错误] 编号输入无效，请重新选择列表中存在的选项！${NC}"
+  
                     fi
                 done
                 ;;
             0) return ;;
             *) echo -e "\n${RED}[错误] 输入无效，请输入 0-3 之间的数字！${NC}"; sleep 1 ;;
-        esac
+esac
     done
 }
 
@@ -847,6 +797,7 @@ view_deployed_nodes() {
                 done
             fi
         else
+         
             echo -e "${YELLOW}暂无保存的分享链接记录。${NC}"
         fi
         
@@ -868,6 +819,7 @@ view_deployed_nodes() {
             echo -e "${YELLOW}>>> 节点二维码 (紧凑版，长内容自动换行无影响)：${NC}"
             qrencode -t UTF8 -m 1 "$target_link"
             pause_for_enter
+     
         elif [[ "$vn_opt" =~ ^[bB]$ ]]; then
             if ! confirm_action "备份当前节点配置"; then continue; fi
             local ts=$(date +"%Y%m%d_%H%M%S")
@@ -900,6 +852,7 @@ view_deployed_nodes() {
                 [ -f "$sel_bk/xray_config.json" ] && cp "$sel_bk/xray_config.json" /usr/local/etc/xray/config.json && systemctl restart xray
                 [ -f "$sel_bk/singbox_config.json" ] && cp "$sel_bk/singbox_config.json" /etc/sing-box/config.json && systemctl restart sing-box
                 [ -f "$sel_bk/vpsbox_nodes.txt" ] && cp "$sel_bk/vpsbox_nodes.txt" "$NODE_RECORD_FILE"
+ 
                 echo -e "\n${GREEN}✅ 节点配置已成功还原！服务已重启。${NC}"
                 pause_for_enter
             else
@@ -965,6 +918,7 @@ delete_node() {
                 echo -e "${GREEN}✅ 已成功移除 Xray 中占用端口 $del_port 的节点配置！${NC}"
             else
                 rm -f /tmp/xray_tmp.json
+           
                 echo -e "${RED}[错误] Xray 节点删除失败，配置可能受损！${NC}"
             fi
         fi
@@ -978,6 +932,7 @@ delete_node() {
                 echo -e "${GREEN}✅ 已成功移除 Sing-box 中占用端口 $del_port 的节点配置！${NC}"
             else
                 rm -f /tmp/sb_tmp.json
+           
                 echo -e "${RED}[错误] Sing-box 节点删除失败，配置可能受损！${NC}"
             fi
         fi
@@ -1207,6 +1162,7 @@ install_ws_tls_node() {
                 [ -z "$PORT_80_SERVICE" ] && PORT_80_SERVICE=$(fuser 80/tcp 2>/dev/null | awk '{print $1}')
                 [ -z "$PORT_80_SERVICE" ] && PORT_80_SERVICE="未知程序"
                 
+   
                 echo -e "\n${YELLOW}[警告] 检测到 80 端口正被 [ ${PORT_80_SERVICE} ] 占用！${NC}"
                 echo -e "${YELLOW}由于您选择了常规 80 端口申请模式，强行继续会临时关闭该程序，并在申请结束后尝试重启它。${NC}"
                 echo -e "${RED}⚠️ 严重提示：如果该程序后续继续长期占用 80 端口，将导致您的证书无法自动续签！建议您返回主菜单，改用【DNS API 模式】。${NC}"
@@ -1216,16 +1172,17 @@ install_ws_tls_node() {
                     echo -e "${CYAN}已取消当前操作。${NC}"
                     pause_for_enter
                     return
+       
                 fi
                 # 完美修复：先用 systemctl 停用服务防止被守护进程秒拉活，再用 fuser 暴力补刀
                 systemctl stop "$PORT_80_SERVICE" > /dev/null 2>&1
                 fuser -k 80/tcp > /dev/null 2>&1
                 sleep 2
+           
             fi
             
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
             CERT_RES=$?
-            
             if [ -n "$PORT_80_SERVICE" ] && [ "$PORT_80_SERVICE" != "未知程序" ]; then
                 echo -e "${CYAN}>>> 正在尝试为您恢复原本的 [${PORT_80_SERVICE}] 服务...${NC}"
                 systemctl start "$PORT_80_SERVICE" >/dev/null 2>&1 || echo -e "${RED}[注意] ${PORT_80_SERVICE} 恢复失败，请稍后手动检查。${NC}"
@@ -1363,6 +1320,7 @@ install_hy2_node() {
                 [ -z "$PORT_80_SERVICE" ] && PORT_80_SERVICE=$(fuser 80/tcp 2>/dev/null | awk '{print $1}')
                 [ -z "$PORT_80_SERVICE" ] && PORT_80_SERVICE="未知程序"
                 
+   
                 echo -e "\n${YELLOW}[警告] 检测到 80 端口正被 [ ${PORT_80_SERVICE} ] 占用！${NC}"
                 echo -e "${YELLOW}由于您选择了常规 80 端口申请模式，强行继续会临时关闭该程序，并在申请结束后尝试重启它。${NC}"
                 echo -e "${RED}⚠️ 严重提示：如果该程序后续继续长期占用 80 端口，将导致您的证书无法自动续签！建议您返回主菜单，改用【DNS API 模式】。${NC}"
@@ -1372,15 +1330,16 @@ install_hy2_node() {
                     echo -e "${CYAN}已取消当前操作。${NC}"
                     pause_for_enter
                     return
+       
                 fi
                 systemctl stop "$PORT_80_SERVICE" > /dev/null 2>&1
                 fuser -k 80/tcp > /dev/null 2>&1
                 sleep 2
             fi
             
+        
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
             CERT_RES=$?
-            
             if [ -n "$PORT_80_SERVICE" ] && [ "$PORT_80_SERVICE" != "未知程序" ]; then
                 echo -e "${CYAN}>>> 正在尝试为您恢复原本的 [${PORT_80_SERVICE}] 服务...${NC}"
                 systemctl start "$PORT_80_SERVICE" >/dev/null 2>&1 || echo -e "${RED}[注意] ${PORT_80_SERVICE} 恢复失败，请稍后手动检查。${NC}"
@@ -1482,6 +1441,7 @@ manage_ufw() {
                     echo -e "${GREEN}✅ 端口 $port 已成功添加放行规则！${NC}"
                     ufw reload > /dev/null 2>&1
                 else
+             
                     echo -e "${RED}[错误] 端口号输入无效！${NC}"
                 fi
                 pause_for_enter
@@ -1492,7 +1452,8 @@ manage_ufw() {
                 echo ""
                 read -r -p "▶ 请输入要删除的【规则编号】(最左侧括号内的数字): " rule_num
                 rule_num="${rule_num// /}"
-                if [[ "$rule_num" =~ ^[0-9]+$ ]]; then
+       
+                 if [[ "$rule_num" =~ ^[0-9]+$ ]]; then
                     ufw --force delete "$rule_num"
                     echo -e "${GREEN}✅ 规则 $rule_num 已删除！${NC}"
                 fi
@@ -1503,11 +1464,13 @@ manage_ufw() {
                 # 修复：防止多行配置带来的 UFW 报错锁死
                 CURRENT_SSH_PORT=$(ss -tlnp | grep -w sshd | awk '{print $4}' | awk -F':' '{print $NF}' | head -n 1)
                 [ -z "$CURRENT_SSH_PORT" ] && CURRENT_SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -n 1)
+        
                 [ -z "$CURRENT_SSH_PORT" ] && CURRENT_SSH_PORT=22
                 
                 echo -e "\n${YELLOW}为防止你与服务器失联，正在强制放行当前 SSH 端口 ($CURRENT_SSH_PORT)...${NC}"
                 ufw allow "$CURRENT_SSH_PORT"/tcp
                 ufw --force enable
+              
                 echo -e "${GREEN}✅ 防火墙已成功开启！${NC}"
                 pause_for_enter
                 ;;
@@ -1584,6 +1547,7 @@ while true; do
     echo -e "  ${GREEN}7.${NC} 虚拟内存 (Swap) 一键管理      ${GREEN}8.${NC} 系统 DNS 极速优化"
     echo -e "  ${GREEN}9.${NC} 修改 SSH 默认登录端口"
     
+   
     echo -e "\n  ${CYAN}【网络协议与性能极速优化】${NC}"
     echo -e "  ${GREEN}10.${NC} 动态 TCP 自动调优注入         ${YELLOW}(智能动态适应，提升吞吐)${NC}"
     echo -e "  ${GREEN}11.${NC} 网络调优参数备份/还原管理\n  ${GREEN}12.${NC} BBR 拥塞控制智能管理中心      ${YELLOW}[支持 Google BBRv3]${NC}"
@@ -1598,6 +1562,7 @@ while true; do
     
     echo -e "\n  ${CYAN}【附加实用工具与安全拓展】${NC}"
     echo -e "  ${GREEN}19.${NC} Cloudflare WARP 一键解锁      ${YELLOW}(获取干净 IP / 规避验证码)${NC}"
+  
     echo -e "  ${GREEN}20.${NC} UFW 防火墙简单端口管理        ${YELLOW}(防呆管理 / 一键放行端口)${NC}"
     echo -e "  ${GREEN}21.${NC} 一键更新 VPSBox 脚本自身"
     echo -e "  ${RED}99.${NC} 彻底卸载 VPSBox 及系统残留"
