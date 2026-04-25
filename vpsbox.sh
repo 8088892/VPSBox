@@ -52,10 +52,11 @@ RAM_GB=$(( (RAM_MB + 512) / 1024 ))
 HW_PROFILE="${CPU_CORES}C${RAM_GB}G"
 CURRENT_TZ=$(timedatectl | grep "Time zone" | awk '{print $3}')
 
-SERVER_IP=$(curl -s4 ifconfig.me || curl -s4 ip.sb)
+# 修复逻辑：为 IP 获取增加超时机制，防止 API 抽风导致脚本启动无限期卡死
+SERVER_IP=$(curl -s4 --max-time 3 ifconfig.me || curl -s4 --max-time 3 ip.sb)
 IP_FORMAT="v4"
 if [ -z "$SERVER_IP" ]; then
-    SERVER_IP=$(curl -s6 ifconfig.me || curl -s6 ip.sb)
+    SERVER_IP=$(curl -s6 --max-time 3 ifconfig.me || curl -s6 --max-time 3 ip.sb)
     IP_FORMAT="v6"
 fi
 
@@ -119,7 +120,10 @@ system_update() {
     clear; print_divider; echo -e "       🔄 更新系统与安装必备组件    "; print_divider
     if ! confirm_action "更新系统与安装组件"; then pause_for_enter; return; fi
     echo -e "\n${CYAN}>>> 正在更新软件源并升级系统组件 (这可能需要几分钟)...${NC}"
-    apt-get update -y && apt-get upgrade -y
+    
+    # 修复逻辑：强制非交互式环境并保持旧配置，防止系统更新弹出交互界面导致脚本假死
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y && apt-get -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" upgrade
     if [ $? -ne 0 ]; then echo -e "\n${RED}[错误] 升级系统组件失败，请检查网络或源状态。${NC}"; pause_for_enter; return; fi
     
     echo -e "\n${CYAN}>>> 正在安装必备工具包...${NC}"
@@ -425,6 +429,13 @@ EOF
                 ;;
             2)
                 if ! command -v apt &> /dev/null; then echo -e "\n${RED}[错误] BBRv3 安装仅支持 Debian/Ubuntu。${NC}"; sleep 2; continue; fi
+                
+                # 修复逻辑：检查 CPU 是否支持 x86-64-v3 指令集，避免老机器装新内核变砖
+                if ! grep -qa "avx2" /proc/cpuinfo; then
+                    echo -e "\n${RED}[拦截] 您的 CPU 过于老旧 (不支持 x86-64-v3 指令集)！安装此内核将导致无法开机！${NC}"
+                    sleep 3; continue
+                fi
+                
                 if ! confirm_action "安装 BBRv3 内核"; then continue; fi
                 echo -e "\n${CYAN}>>> 正在连接 Ubuntu 官方服务器获取 XanMod 密钥 (防拦截模式)...${NC}"
                 gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 86F7D09EE734E623 > /dev/null 2>&1
@@ -689,7 +700,8 @@ apply_tuning() {
 
 backup_config_silently() {
     local ts=$(date +"%Y%m%d_%H%M%S")
-    sysctl -a --pattern net.ipv4.tcp | grep -E "rmem|wmem|congestion|sack" > "${BACKUP_DIR}/backup_${ts}.conf" 2>/dev/null
+    # 修复逻辑：去除不支持的 --pattern 参数，改用更兼容的正则匹配
+    sysctl -a 2>/dev/null | grep -E "net\.ipv4\.tcp_(rmem|wmem|congestion|sack)" > "${BACKUP_DIR}/backup_${ts}.conf"
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✅ 参数已自动备份。${NC}"
     else
@@ -711,7 +723,8 @@ manage_backup() {
             1)
                 if ! confirm_action "备份当前网络参数"; then continue; fi
                 local ts=$(date +"%Y%m%d_%H%M%S")
-                sysctl -a --pattern net.ipv4.tcp | grep -E "rmem|wmem|congestion|sack" > "${BACKUP_DIR}/backup_${ts}.conf" 2>/dev/null
+                # 修复逻辑：去除不支持的 --pattern 参数，改用更兼容的正则匹配
+                sysctl -a 2>/dev/null | grep -E "net\.ipv4\.tcp_(rmem|wmem|congestion|sack)" > "${BACKUP_DIR}/backup_${ts}.conf"
                 if [ $? -eq 0 ]; then
                     echo -e "\n${GREEN}✅ TCP 参数备份成功！${NC}"
                 else
@@ -1128,10 +1141,15 @@ install_ws_tls_node() {
         if [ "$cert_mode" == "0" ]; then return; fi; [ -z "$cert_mode" ] && cert_mode=2
         if [[ "$cert_mode" != "1" && "$cert_mode" != "2" ]]; then continue; fi
         
+        # 修复逻辑：新增 Account ID 收集和找回提示
         if [ "$cert_mode" == "1" ]; then
             read -r -p "▶ 请输入您的 Cloudflare API Token: " CF_Token
             if [ -z "$CF_Token" ]; then continue; fi
+            echo -e "${YELLOW}提示: Account ID 可在 Cloudflare 控制台 -> 任意域名概览页 -> 右侧边栏底部找到。${NC}"
+            read -r -p "▶ 请输入您的 Cloudflare Account ID: " CF_Account_ID
+            if [ -z "$CF_Account_ID" ]; then continue; fi
             export CF_Token="$CF_Token"
+            export CF_Account_ID="$CF_Account_ID"
             break
         elif [ "$cert_mode" == "2" ]; then
             if [ -n "$DOMAIN_IP" ] && [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
@@ -1176,7 +1194,8 @@ install_ws_tls_node() {
                 
                 echo -e "\n${YELLOW}[警告] 检测到 80 端口正被 [ ${PORT_80_SERVICE} ] 占用！${NC}"
                 echo -e "${YELLOW}由于您选择了常规 80 端口申请模式，强行继续会临时关闭该程序，并在申请结束后尝试重启它。${NC}"
-                echo -e "${RED}⚠️ 严重提示：如果该程序后续继续长期占用 80 端口，将导致您的证书无法自动续签！建议您返回主菜单，改用【DNS API 模式】。${NC}"
+                # 修复逻辑：强调对 Docker 和关键业务的致命影响
+                echo -e "${RED}⚠️ 严重提示：如果该程序是 Docker 容器或关键业务，强制关闭可能无法自动恢复，甚至导致业务瘫痪！并且长期占用会导致证书无法自动续签！建议改用【DNS API 模式】。${NC}"
                 
                 read -r -p "▶ 是否仍要临时关闭 [${PORT_80_SERVICE}] 强行继续申请？(y/n, 默认 n): " force_kill_80
                 if [[ ! "${force_kill_80// /}" =~ ^[yY]$ ]]; then
@@ -1282,10 +1301,15 @@ install_hy2_node() {
         if [ "$cert_mode" == "0" ]; then return; fi; [ -z "$cert_mode" ] && cert_mode=2
         if [[ "$cert_mode" != "1" && "$cert_mode" != "2" ]]; then continue; fi
         
+        # 修复逻辑：新增 Account ID 收集和找回提示
         if [ "$cert_mode" == "1" ]; then
             read -r -p "▶ 请输入您的 Cloudflare API Token: " CF_Token
             if [ -z "$CF_Token" ]; then continue; fi
+            echo -e "${YELLOW}提示: Account ID 可在 Cloudflare 控制台 -> 任意域名概览页 -> 右侧边栏底部找到。${NC}"
+            read -r -p "▶ 请输入您的 Cloudflare Account ID: " CF_Account_ID
+            if [ -z "$CF_Account_ID" ]; then continue; fi
             export CF_Token="$CF_Token"
+            export CF_Account_ID="$CF_Account_ID"
             break
         elif [ "$cert_mode" == "2" ]; then
             if [ -n "$DOMAIN_IP" ] && [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
@@ -1330,7 +1354,8 @@ install_hy2_node() {
                 
                 echo -e "\n${YELLOW}[警告] 检测到 80 端口正被 [ ${PORT_80_SERVICE} ] 占用！${NC}"
                 echo -e "${YELLOW}由于您选择了常规 80 端口申请模式，强行继续会临时关闭该程序，并在申请结束后尝试重启它。${NC}"
-                echo -e "${RED}⚠️ 严重提示：如果该程序后续继续长期占用 80 端口，将导致您的证书无法自动续签！建议您返回主菜单，改用【DNS API 模式】。${NC}"
+                # 修复逻辑：强调对 Docker 和关键业务的致命影响
+                echo -e "${RED}⚠️ 严重提示：如果该程序是 Docker 容器或关键业务，强制关闭可能无法自动恢复，甚至导致业务瘫痪！并且长期占用会导致证书无法自动续签！建议改用【DNS API 模式】。${NC}"
                 
                 read -r -p "▶ 是否仍要临时关闭 [${PORT_80_SERVICE}] 强行继续申请？(y/n, 默认 n): " force_kill_80
                 if [[ ! "${force_kill_80// /}" =~ ^[yY]$ ]]; then
@@ -1461,7 +1486,6 @@ manage_ufw() {
                 pause_for_enter
                 ;;
             4)
-                # 修复逻辑：强化安全提示，设置默认策略并安全放行当前SSH端口
                 if ! confirm_action "开启防火墙并默认拦截外部访问 (系统将自动防呆放行 SSH)"; then continue; fi
                 CURRENT_SSH_PORT=$(ss -tlnp | grep -w sshd | awk '{print $4}' | awk -F':' '{print $NF}' | head -n 1)
                 [ -z "$CURRENT_SSH_PORT" ] && CURRENT_SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -n 1)
