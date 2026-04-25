@@ -2,7 +2,7 @@
 
 # =====================================================================
 # 项目名称: VPS Box (轻量级节点管理与网络优化引擎)
-# 版本: v2.5.3 (Bug修复与严格错误提示版)
+# 版本: v2.5.4 (自动补齐 cron 依赖 & UI排版修复版)
 # =====================================================================
 
 RED='\033[0;31m'
@@ -102,10 +102,17 @@ install_dependencies() {
             missing_apps+=("$app")
         fi
     done
+    
+    # 修复逻辑：深度检测 cron 是否安装，防止 acme.sh 脚本部署失败
+    if ! dpkg -l | grep -qw cron; then
+        missing_apps+=("cron")
+    fi
+
     if [ ${#missing_apps[@]} -ne 0 ]; then
         echo -e "\n${CYAN}[系统] 检测到缺失必要底层组件，正在自动补全...${NC}"
         apt-get update -y > "$INSTALL_LOG" 2>&1
-        apt-get install -y curl wget sudo unzip tar openssl socat psmisc iputils-ping jq gnupg2 dnsutils bsdutils qrencode >> "$INSTALL_LOG" 2>&1
+        apt-get install -y curl wget sudo unzip tar openssl socat psmisc iputils-ping jq gnupg2 dnsutils bsdutils qrencode cron >> "$INSTALL_LOG" 2>&1
+        systemctl enable --now cron >> "$INSTALL_LOG" 2>&1
         if [ $? -ne 0 ]; then
             echo -e "${RED}[警告] 某些组件安装可能存在异常，请查看 $INSTALL_LOG 排查原因。${NC}"
         fi
@@ -127,7 +134,8 @@ system_update() {
     if [ $? -ne 0 ]; then echo -e "\n${RED}[错误] 升级系统组件失败，请检查网络或源状态。${NC}"; pause_for_enter; return; fi
     
     echo -e "\n${CYAN}>>> 正在安装必备工具包...${NC}"
-    apt-get install -y curl wget sudo unzip tar openssl socat psmisc iputils-ping jq gnupg2 dnsutils bsdutils qrencode
+    apt-get install -y curl wget sudo unzip tar openssl socat psmisc iputils-ping jq gnupg2 dnsutils bsdutils qrencode cron
+    systemctl enable --now cron >/dev/null 2>&1
     if [ $? -ne 0 ]; then echo -e "\n${RED}[错误] 必备工具包安装失败。${NC}"; pause_for_enter; return; fi
     
     echo -e "\n${GREEN}✅ 系统更新与组件安装完毕！${NC}"
@@ -362,6 +370,10 @@ manage_swap() {
 optimize_dns() {
     clear; print_divider; echo -e "       🌐 系统 DNS 极速优化    "; print_divider
     if ! confirm_action "将系统 DNS 替换为 1.1.1.1 和 8.8.8.8"; then pause_for_enter; return; fi
+    
+    # 修复逻辑：修复了视觉排版问题，添加执行过程提示动画，统一 UI 风格
+    echo -e "\n${CYAN}>>> 正在优化系统 DNS 配置并锁定文件...${NC}"
+    
     # 修复逻辑：丢弃 chattr 的恶心错误输出以保持界面清爽
     chattr -i /etc/resolv.conf >/dev/null 2>&1
     cat > /etc/resolv.conf <<EOF
@@ -369,11 +381,11 @@ nameserver 1.1.1.1
 nameserver 8.8.8.8
 EOF
     if [ $? -ne 0 ]; then
-        echo -e "\n${RED}[错误] 写入 /etc/resolv.conf 失败。${NC}"
+        echo -e "${RED}[错误] 写入 /etc/resolv.conf 失败。${NC}"
     else
         # 修复逻辑：同样丢弃输出
         chattr +i /etc/resolv.conf >/dev/null 2>&1
-        echo -e "\n${GREEN}✅ 系统 DNS 已优化成功，并已锁定防止系统篡改！${NC}"
+        echo -e "${GREEN}✅ 系统 DNS 已优化成功，并已锁定防止系统篡改！${NC}"
     fi
     pause_for_enter
 }
@@ -384,6 +396,7 @@ EOF
 
 get_bbr_status() {
     local cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    
     if [[ "$cc" == "bbr" ]]; then
         if uname -r | grep -qi "xanmod"; then 
             echo -e "${YELLOW}BBRv3 (基于 Google 官方源码)${NC}"
@@ -1558,7 +1571,7 @@ while true; do
     clear
     echo ""
     print_divider
-    echo -e "${PURPLE}           VPS Box 节点部署与服务器管家 v2.5.3 ${NC}"
+    echo -e "${PURPLE}           VPS Box 节点部署与服务器管家 v2.5.4 ${NC}"
     print_divider
     
     echo -e "  公网 IP  : ${YELLOW}${SERVER_IP} ${CYAN}[${IP_FORMAT}]${NC}"
@@ -1581,7 +1594,7 @@ while true; do
     echo -e "\n  ${CYAN}【流媒体检测与节点防冲突部署】${NC}"
     echo -e "  ${GREEN}13.${NC} ip质量检测与流媒体解锁"
     echo -e "  ${GREEN}14.${NC} 部署 VLESS-Reality            ${YELLOW}(防封锁 / 低延迟直连)${NC}"
-    echo -e "  ${GREEN}15.${NC} 部署 VLESS-WS-TLS             ${YELLOW}(套 CDN 救活被墙 IP)${NC}"
+    echo -e "  ${GREEN}15.${NC} 部署 VLESS-WS-TLS            ${YELLOW}(套 CDN 救活被墙 IP)${NC}"
     echo -e "  ${GREEN}16.${NC} 部署 Hysteria2                ${YELLOW}(UDP 协议提速)${NC}"
     echo -e "  ${GREEN}17.${NC} 查看已部署节点与备份管理"
     echo -e "  ${GREEN}18.${NC} 删除指定的已部署节点"
