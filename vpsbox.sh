@@ -354,16 +354,22 @@ manage_swap() {
 optimize_dns() {
     clear; print_divider; echo -e "       🌐 系统 DNS 极速优化    "; print_divider
     if ! confirm_action "将系统 DNS 替换为 1.1.1.1 和 8.8.8.8"; then pause_for_enter; return; fi
+    
+    # 尝试解除锁定，忽略可能产生的不支持报错
     chattr -i /etc/resolv.conf 2>/dev/null
+    
+    # 写入新的 DNS 配置
     cat > /etc/resolv.conf <<EOF
 nameserver 1.1.1.1
 nameserver 8.8.8.8
 EOF
+    
     if [ $? -ne 0 ]; then
         echo -e "\n${RED}[错误] 写入 /etc/resolv.conf 失败。${NC}"
     else
-        chattr +i /etc/resolv.conf
-        echo -e "\n${GREEN}✅ 系统 DNS 已优化成功，并已锁定防止系统篡改！${NC}"
+        # 尝试重新锁定文件，同样隐藏不支持该操作的报错
+        chattr +i /etc/resolv.conf 2>/dev/null
+        echo -e "\n${GREEN}✅ 系统 DNS 已优化成功，并已尝试锁定防止系统篡改！${NC}"
     fi
     pause_for_enter
 }
