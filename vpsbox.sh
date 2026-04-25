@@ -2,7 +2,7 @@
 
 # =====================================================================
 # 项目名称: VPS Box (轻量级节点管理与网络优化引擎)
-# 版本: v2.5.4 (自动补齐 cron 依赖 & UI排版修复版)
+# 版本: v2.5.5 (增加 CF API Token 获取向导)
 # =====================================================================
 
 RED='\033[0;31m'
@@ -264,7 +264,6 @@ change_ssh_port() {
         new_port="${new_port// /}"
         if [ "$new_port" == "0" ] || [ -z "$new_port" ]; then return; fi
         
-        # 修复逻辑：允许 22 端口或 1024-65535 的端口
         if ! [[ "$new_port" =~ ^[0-9]+$ ]] || ( [ "$new_port" -ne 22 ] && ([ "$new_port" -le 1024 ] || [ "$new_port" -ge 65535 ]) ); then
             echo -e "${RED}[错误] 端口号必须是 22 或者在 1024 到 65535 之间！请重新输入。${NC}"
             continue
@@ -371,10 +370,7 @@ optimize_dns() {
     clear; print_divider; echo -e "       🌐 系统 DNS 极速优化    "; print_divider
     if ! confirm_action "将系统 DNS 替换为 1.1.1.1 和 8.8.8.8"; then pause_for_enter; return; fi
     
-    # 修复逻辑：修复了视觉排版问题，添加执行过程提示动画，统一 UI 风格
     echo -e "\n${CYAN}>>> 正在优化系统 DNS 配置并锁定文件...${NC}"
-    
-    # 修复逻辑：丢弃 chattr 的恶心错误输出以保持界面清爽
     chattr -i /etc/resolv.conf >/dev/null 2>&1
     cat > /etc/resolv.conf <<EOF
 nameserver 1.1.1.1
@@ -383,7 +379,6 @@ EOF
     if [ $? -ne 0 ]; then
         echo -e "${RED}[错误] 写入 /etc/resolv.conf 失败。${NC}"
     else
-        # 修复逻辑：同样丢弃输出
         chattr +i /etc/resolv.conf >/dev/null 2>&1
         echo -e "${GREEN}✅ 系统 DNS 已优化成功，并已锁定防止系统篡改！${NC}"
     fi
@@ -443,7 +438,6 @@ EOF
             2)
                 if ! command -v apt &> /dev/null; then echo -e "\n${RED}[错误] BBRv3 安装仅支持 Debian/Ubuntu。${NC}"; sleep 2; continue; fi
                 
-                # 修复逻辑：检查 CPU 是否支持 x86-64-v3 指令集，避免老机器装新内核变砖
                 if ! grep -qa "avx2" /proc/cpuinfo; then
                     echo -e "\n${RED}[拦截] 您的 CPU 过于老旧 (不支持 x86-64-v3 指令集)！安装此内核将导致无法开机！${NC}"
                     sleep 3; continue
@@ -556,7 +550,6 @@ apply_tuning() {
 
     echo -e "\n${CYAN}>>> 正在运行纯原生自研引擎生成配置 (0 依赖)...${NC}"
     
-    # 【修复重点】将自定义函数放在 BEGIN 外面，解决 standard awk 的语法兼容性错误
     awk -v e="$local_bw" -v n="$server_bw" -v r="$latency" -v _ram="$w_ram" -v f="$ramp_up" '
     function floor(x) { return int(x) }
     function ceil(x) { y = int(x); return (x > y) ? y + 1 : y }
@@ -566,7 +559,6 @@ apply_tuning() {
     function log_curve(val) { base=exp(1); return log(val * (base - 1) + 1) / log(base) }
     
     BEGIN {
-        # 核心算法计算 (与 Python 算法 1:1 等效)
         F = clamp(r / 40, 1, 5)
         T = clamp(2 * sqrt(e / n) * F, 1.5, 5)
         base_bytes = floor(1024 * min(e * T, 2 * n) * 1024 / 8)
@@ -628,7 +620,6 @@ apply_tuning() {
         gc_thresh2 = (_ram <= 512) ? 1024 : 2048
         gc_thresh1 = (_ram <= 512) ? 256 : 512
 
-        # 打印生成的配置文件
         print "# =========================================="
         print "# VPSBox 网络调优核心逻辑 (VPSBox 自研引擎原生生成)"
         print "# =========================================="
@@ -693,7 +684,6 @@ apply_tuning() {
         print "net.ipv4.conf.default.accept_redirects = 0"
     }' > "$CUSTOM_CONF"
 
-    # 严格检验是否生成成功
     if [ $? -ne 0 ] || [ ! -s "$CUSTOM_CONF" ]; then
         echo -e "\n${RED}[错误] 动态参数计算或配置生成失败！可能是系统环境不兼容 awk。${NC}"
         pause_for_enter; return;
@@ -713,7 +703,6 @@ apply_tuning() {
 
 backup_config_silently() {
     local ts=$(date +"%Y%m%d_%H%M%S")
-    # 修复逻辑：去除不支持的 --pattern 参数，改用更兼容的正则匹配
     sysctl -a 2>/dev/null | grep -E "net\.ipv4\.tcp_(rmem|wmem|congestion|sack)" > "${BACKUP_DIR}/backup_${ts}.conf"
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✅ 参数已自动备份。${NC}"
@@ -736,7 +725,6 @@ manage_backup() {
             1)
                 if ! confirm_action "备份当前网络参数"; then continue; fi
                 local ts=$(date +"%Y%m%d_%H%M%S")
-                # 修复逻辑：去除不支持的 --pattern 参数，改用更兼容的正则匹配
                 sysctl -a 2>/dev/null | grep -E "net\.ipv4\.tcp_(rmem|wmem|congestion|sack)" > "${BACKUP_DIR}/backup_${ts}.conf"
                 if [ $? -eq 0 ]; then
                     echo -e "\n${GREEN}✅ TCP 参数备份成功！${NC}"
@@ -1154,8 +1142,9 @@ install_ws_tls_node() {
         if [ "$cert_mode" == "0" ]; then return; fi; [ -z "$cert_mode" ] && cert_mode=2
         if [[ "$cert_mode" != "1" && "$cert_mode" != "2" ]]; then continue; fi
         
-        # 修复逻辑：新增 Account ID 收集和找回提示
         if [ "$cert_mode" == "1" ]; then
+            # 修复：新增 API Token 获取步骤的引导提示
+            echo -e "${YELLOW}提示: API Token 可在 Cloudflare 右上角个人资料 -> API 令牌 -> 创建令牌 (选择模板: 编辑区域 DNS) 获取。${NC}"
             read -r -p "▶ 请输入您的 Cloudflare API Token: " CF_Token
             if [ -z "$CF_Token" ]; then continue; fi
             echo -e "${YELLOW}提示: Account ID 可在 Cloudflare 控制台 -> 任意域名概览页 -> 右侧边栏底部找到。${NC}"
@@ -1207,7 +1196,6 @@ install_ws_tls_node() {
                 
                 echo -e "\n${YELLOW}[警告] 检测到 80 端口正被 [ ${PORT_80_SERVICE} ] 占用！${NC}"
                 echo -e "${YELLOW}由于您选择了常规 80 端口申请模式，强行继续会临时关闭该程序，并在申请结束后尝试重启它。${NC}"
-                # 修复逻辑：强调对 Docker 和关键业务的致命影响
                 echo -e "${RED}⚠️ 严重提示：如果该程序是 Docker 容器或关键业务，强制关闭可能无法自动恢复，甚至导致业务瘫痪！并且长期占用会导致证书无法自动续签！建议改用【DNS API 模式】。${NC}"
                 
                 read -r -p "▶ 是否仍要临时关闭 [${PORT_80_SERVICE}] 强行继续申请？(y/n, 默认 n): " force_kill_80
@@ -1314,8 +1302,9 @@ install_hy2_node() {
         if [ "$cert_mode" == "0" ]; then return; fi; [ -z "$cert_mode" ] && cert_mode=2
         if [[ "$cert_mode" != "1" && "$cert_mode" != "2" ]]; then continue; fi
         
-        # 修复逻辑：新增 Account ID 收集和找回提示
         if [ "$cert_mode" == "1" ]; then
+            # 修复：新增 API Token 获取步骤的引导提示
+            echo -e "${YELLOW}提示: API Token 可在 Cloudflare 右上角个人资料 -> API 令牌 -> 创建令牌 (选择模板: 编辑区域 DNS) 获取。${NC}"
             read -r -p "▶ 请输入您的 Cloudflare API Token: " CF_Token
             if [ -z "$CF_Token" ]; then continue; fi
             echo -e "${YELLOW}提示: Account ID 可在 Cloudflare 控制台 -> 任意域名概览页 -> 右侧边栏底部找到。${NC}"
@@ -1367,7 +1356,6 @@ install_hy2_node() {
                 
                 echo -e "\n${YELLOW}[警告] 检测到 80 端口正被 [ ${PORT_80_SERVICE} ] 占用！${NC}"
                 echo -e "${YELLOW}由于您选择了常规 80 端口申请模式，强行继续会临时关闭该程序，并在申请结束后尝试重启它。${NC}"
-                # 修复逻辑：强调对 Docker 和关键业务的致命影响
                 echo -e "${RED}⚠️ 严重提示：如果该程序是 Docker 容器或关键业务，强制关闭可能无法自动恢复，甚至导致业务瘫痪！并且长期占用会导致证书无法自动续签！建议改用【DNS API 模式】。${NC}"
                 
                 read -r -p "▶ 是否仍要临时关闭 [${PORT_80_SERVICE}] 强行继续申请？(y/n, 默认 n): " force_kill_80
@@ -1571,7 +1559,7 @@ while true; do
     clear
     echo ""
     print_divider
-    echo -e "${PURPLE}           VPS Box 节点部署与服务器管家 v2.5.4 ${NC}"
+    echo -e "${PURPLE}           VPS Box 节点部署与服务器管家 v2.5.5 ${NC}"
     print_divider
     
     echo -e "  公网 IP  : ${YELLOW}${SERVER_IP} ${CYAN}[${IP_FORMAT}]${NC}"
