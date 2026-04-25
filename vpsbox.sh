@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # =====================================================================
-# 项目名称: VPS Box (全能服务器优化与多节点部署工具箱)
+# 项目名称: VPS Box (轻量级节点管理与网络优化引擎)
+# 版本: v2.5.2 
 # =====================================================================
 
 RED='\033[0;31m'
@@ -27,7 +28,7 @@ fi
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     if [[ "$ID" != "debian" && "$ID" != "ubuntu" ]]; then
-        echo -e "\n${RED}[错误] VPSBox 当前仅支持 Debian 或 Ubuntu 系统！您的系统是 $ID，强行运行可能导致系统损坏。${NC}\n"
+        echo -e "\n${RED}[错误] VPSBox 当前仅支持 Debian 或 Ubuntu 系统！${NC}\n"
         exit 1
     fi
 else
@@ -95,13 +96,11 @@ confirm_action() {
 install_dependencies() {
     local apps=("curl" "wget" "jq" "openssl" "socat" "fuser" "unzip" "qrencode")
     local missing_apps=()
-
     for app in "${apps[@]}"; do
         if ! command -v "$app" &> /dev/null; then
             missing_apps+=("$app")
         fi
     done
-
     if [ ${#missing_apps[@]} -ne 0 ]; then
         echo -e "\n${CYAN}[系统] 检测到缺失必要底层组件，正在自动补全...${NC}"
         apt-get update -y > "$INSTALL_LOG" 2>&1
@@ -119,7 +118,6 @@ install_dependencies() {
 system_update() {
     clear; print_divider; echo -e "       🔄 更新系统与安装必备组件    "; print_divider
     if ! confirm_action "更新系统与安装组件"; then pause_for_enter; return; fi
-    
     echo -e "\n${CYAN}>>> 正在更新软件源并升级系统组件 (这可能需要几分钟)...${NC}"
     apt-get update -y && apt-get upgrade -y
     echo -e "\n${CYAN}>>> 正在安装必备工具包...${NC}"
@@ -131,7 +129,6 @@ system_update() {
 system_clean() {
     clear; print_divider; echo -e "       🧹 系统垃圾与废弃依赖清理    "; print_divider
     if ! confirm_action "清理系统垃圾与冗余日志"; then pause_for_enter; return; fi
-    
     echo -e "\n${CYAN}>>> 正在卸载无用的旧依赖包...${NC}"
     apt-get autoremove -y
     echo -e "\n${CYAN}>>> 正在清理系统下载缓存...${NC}"
@@ -145,16 +142,14 @@ system_clean() {
 change_root_password() {
     clear; print_divider; echo -e "       🔑 修改系统 root 密码    "; print_divider
     if ! confirm_action "修改 root 密码"; then pause_for_enter; return; fi
-    
     echo -e "\n${YELLOW}提示：输入密码时屏幕不会显示字符，属于正常安全机制。${NC}\n"
-    
     while true; do
         passwd root
         if [ $? -eq 0 ]; then
             echo -e "\n${GREEN}✅ 密码已成功修改！${NC}"
             break
         else
-            echo -e "\n${RED}[错误] 密码修改失败！(可能是两次输入不一致，或者密码为空/仅包含空格)${NC}"
+            echo -e "\n${RED}[错误] 密码修改失败！${NC}"
             read -r -p "▶ 是否继续尝试修改密码？(y/n, 默认 y): " retry_pwd
             retry_pwd="${retry_pwd// /}"
             if [[ "$retry_pwd" =~ ^[nN]$ ]]; then
@@ -179,7 +174,6 @@ manage_ssh_security() {
         echo ""
         read -r -p "▶ 请选择操作 [0-4]: " ssh_opt
         ssh_opt="${ssh_opt// /}"
-        
         case $ssh_opt in
             1)
                 while true; do
@@ -189,26 +183,20 @@ manage_ssh_security() {
                         echo -e "${RED}[错误] 密钥内容不能为空，请重新输入！${NC}"
                         continue
                     fi
-                    
                     if ! confirm_action "导入此 SSH 公钥"; then break; fi
-
                     mkdir -p ~/.ssh
                     chmod 700 ~/.ssh
-
                     if [ -s ~/.ssh/authorized_keys ]; then
                         echo -e "\n${YELLOW}[发现] 系统中已存在其他 SSH 密钥记录。${NC}"
                         read -r -p "▶ 是否清空旧密钥并覆盖？(y-覆盖清空 / n-保留追加, 默认 n): " overwrite_opt
                         overwrite_opt="${overwrite_opt// /}"
-            
                         if [[ "$overwrite_opt" =~ ^[yY]$ ]]; then
                             > ~/.ssh/authorized_keys
                             echo -e "${CYAN}>>> 已清空历史废弃密钥。${NC}"
                         fi
                     fi
-
                     echo "$pub_key" >> ~/.ssh/authorized_keys
                     chmod 600 ~/.ssh/authorized_keys
-                    
                     echo -e "\n${GREEN}✅ 密钥已成功添加！请先测试使用密钥登录，再关闭密码登录功能。${NC}"
                     pause_for_enter
                     break
@@ -242,22 +230,17 @@ manage_ssh_security() {
 
 change_ssh_port() {
     clear; print_divider; echo -e "       🚪 修改 SSH 默认登录端口    "; print_divider
-    echo -e "${YELLOW}【防爆破】修改默认 22 端口可以有效抵御 90% 的脚本扫描。${NC}"
-    
     while true; do
         read -r -p "▶ 请输入新的 SSH 端口号 (建议 10000-65535，输入 0 取消): " new_port
         new_port="${new_port// /}"
         if [ "$new_port" == "0" ] || [ -z "$new_port" ]; then return; fi
-        
         if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -le 1024 ] || [ "$new_port" -ge 65535 ]; then
             echo -e "${RED}[错误] 端口号必须在 1024 到 65535 之间！请重新输入。${NC}"
             continue
         fi
         break
     done
-    
     if ! confirm_action "将 SSH 端口修改为 $new_port"; then pause_for_enter; return; fi
-    
     sed -i "s/^#\?Port .*/Port $new_port/g" /etc/ssh/sshd_config
     systemctl restart sshd
     echo -e "\n${GREEN}✅ SSH 端口已修改为 $new_port！${NC}"
@@ -268,7 +251,6 @@ change_ssh_port() {
 change_hostname() {
     clear; print_divider; echo -e "       🏷️ 修改系统主机名 (Hostname)    "; print_divider
     echo -e "当前主机名: ${YELLOW}$(hostname)${NC}"
-    
     while true; do
         read -r -p "▶ 请输入新的主机名 (仅限字母、数字和连字符, 输入 0 取消): " new_hostname
         new_hostname="${new_hostname// /}"
@@ -283,9 +265,7 @@ change_hostname() {
         fi
         break
     done
-    
     if ! confirm_action "将主机名修改为 $new_hostname"; then pause_for_enter; return; fi
-
     hostnamectl set-hostname "$new_hostname"
     sed -i "s/127.0.1.1.*/127.0.1.1 $new_hostname/g" /etc/hosts
     echo -e "\n${GREEN}✅ 主机名已修改为 $new_hostname！(重新连接 SSH 后即可看到变化)${NC}"
@@ -295,7 +275,6 @@ change_hostname() {
 set_china_timezone() {
     clear; print_divider; echo -e "       🕒 修改系统时区为 [北京时间] (Asia/Shanghai)    "; print_divider
     if ! confirm_action "修改系统时区为中国北京时间"; then pause_for_enter; return; fi
-    
     timedatectl set-timezone Asia/Shanghai
     CURRENT_TZ="Asia/Shanghai"
     echo -e "\n${GREEN}✅ 系统时区已同步为中国北京时间。${NC}"
@@ -304,20 +283,17 @@ set_china_timezone() {
 
 manage_swap() {
     clear; print_divider; echo -e "       💾 虚拟内存 (Swap) 一键管理    "; print_divider
-    echo -e "${YELLOW}【防宕机】小内存机器(<=1GB)开启 Swap 可有效防止内存溢出导致内核死机。${NC}"
     local swap_size=$(free -m | grep -i swap | awk '{print $2}')
     echo -e "当前 Swap 大小: ${GREEN}${swap_size} MB${NC}\n"
-    
     while true; do
         echo -e "  ${GREEN}1.${NC} 创建/修改 Swap (推荐 1024MB 或 2048MB)"
         echo -e "  ${GREEN}2.${NC} 关闭并删除现有 Swap"
         echo -e "  ${GREEN}0.${NC} 取消返回"
         read -r -p "▶ 请选择操作 [0-2]: " swap_opt
         swap_opt="${swap_opt// /}"
-        
         case $swap_opt in
             1)
-              while true; do
+                while true; do
                     read -r -p "▶ 请输入 Swap 大小 (单位 MB，例如 1024): " input_size
                     input_size="${input_size// /}"
                     if [[ "$input_size" =~ ^[0-9]+$ ]]; then
@@ -325,13 +301,12 @@ manage_swap() {
                     else
                         echo -e "${RED}[错误] 输入无效，请输入纯数字。${NC}"
                     fi
-              done
+                done
                 if ! confirm_action "设置 ${input_size}MB 的 Swap"; then return; fi
                 echo -e "\n${CYAN}>>> 正在配置 ${input_size}MB Swap，请稍候...${NC}"
                 swapoff -a
                 rm -f /swapfile
                 dd if=/dev/zero of=/swapfile bs=1M count=$input_size status=progress
-                
                 chmod 600 /swapfile
                 mkswap /swapfile
                 swapon /swapfile
@@ -348,7 +323,7 @@ manage_swap() {
                 sed -i '/\/swapfile/d' /etc/fstab
                 echo -e "\n${GREEN}✅ Swap 已彻底关闭并清理！${NC}"
                 return
-            ;;
+                ;;
             0) return ;;
             *) echo -e "\n${RED}[错误] 输入无效！请输入 0、1 或 2 进行选择。${NC}\n" ;;
         esac
@@ -357,9 +332,7 @@ manage_swap() {
 
 optimize_dns() {
     clear; print_divider; echo -e "       🌐 系统 DNS 极速优化    "; print_divider
-    echo -e "${YELLOW}【防超时】将系统 DNS 切换为 Cloudflare 和 Google 公共节点，加快解析速度。${NC}"
     if ! confirm_action "将系统 DNS 替换为 1.1.1.1 和 8.8.8.8"; then pause_for_enter; return; fi
-    
     chattr -i /etc/resolv.conf 2>/dev/null
     cat > /etc/resolv.conf <<EOF
 nameserver 1.1.1.1
@@ -418,7 +391,6 @@ EOF
                 if ! command -v apt &> /dev/null; then echo -e "\n${RED}[错误] BBRv3 安装仅支持 Debian/Ubuntu。${NC}"; sleep 2; continue; fi
                 if ! confirm_action "安装 BBRv3 内核"; then continue; fi
                 echo -e "\n${CYAN}>>> 正在连接 Ubuntu 官方服务器获取 XanMod 密钥 (防拦截模式)...${NC}"
-                
                 gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 86F7D09EE734E623 > /dev/null 2>&1
                 gpg --export 86F7D09EE734E623 > /usr/share/keyrings/xanmod-archive-keyring.gpg
                 
@@ -427,12 +399,9 @@ EOF
                     rm -f /usr/share/keyrings/xanmod-archive-keyring.gpg
                     sleep 3; continue
                 fi
-
                 echo 'deb [signed-by=/usr/share/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' > /etc/apt/sources.list.d/xanmod-release.list
-                
                 echo -e "\n${CYAN}>>> 正在更新软件源...${NC}"
                 apt update -y
-        
                 echo -e "\n${CYAN}>>> 正在安装 XanMod BBRv3 内核 (x64v3 标准版)...${NC}"
                 apt install -y linux-xanmod-x64v3
                 
@@ -443,7 +412,6 @@ net.ipv4.tcp_congestion_control=bbr
 EOF
                     update-grub
                     echo -e "\n${GREEN}🎉 BBRv3 核心部署完毕！需要重启后生效。${NC}"
-                    
                     read -r -p "▶ 是否立即重启服务器？(y/n, 默认 n): " do_reboot
                     if [[ "${do_reboot// /}" =~ ^[yY]$ ]]; then
                         echo -e "${YELLOW}正在重启服务器...${NC}"
@@ -481,43 +449,190 @@ EOF
 }
 
 apply_tuning() {
-    clear; print_divider; echo -e "       自定义 TCP 自动调优注入    "; print_divider
+    clear; print_divider; echo -e "       自研动态 TCP 智能调优引擎    "; print_divider
     echo -e "${YELLOW}【模式说明】${NC}"
-    echo -e "  一键注入业内标准且高性能的自定义 TCP/BBR 优化配置。"
-    echo -e "  无需繁琐的参数输入，直接为您自适应配置最佳并发与吞吐量参数，极致压榨带宽。"
+    echo -e "  基于 VPSBox 自研高级算法，智能感知硬件内存，自适应生成极致 TCP 参数。"
     print_separator
     
+    local local_bw server_bw latency ramp_up
+    while true; do
+        read -r -p "▶ 请输入本地/客户端下行带宽 (Mbps, 例如 500): " local_bw
+        [[ "${local_bw// /}" =~ ^[0-9]+$ ]] && break || echo -e "${RED}[错误] 请输入有效的纯数字！${NC}"
+    done
+    while true; do
+        read -r -p "▶ 请输入服务器上行带宽 (Mbps, 例如 1000): " server_bw
+        [[ "${server_bw// /}" =~ ^[0-9]+$ ]] && break || echo -e "${RED}[错误] 请输入有效的纯数字！${NC}"
+    done
+    while true; do
+        read -r -p "▶ 请输入预估网络延迟 (ms, 例如 150): " latency
+        [[ "${latency// /}" =~ ^[0-9]+$ ]] && break || echo -e "${RED}[错误] 请输入有效的纯数字！${NC}"
+    done
+    while true; do
+        echo -e "\n${CYAN}【爬升曲线指南】${NC}"
+        echo -e " ${GREEN}0.1 - 0.4${NC}: 保守稳定 (适合 512M 等极小内存机器)"
+        echo -e " ${GREEN}0.5 - 0.6${NC}: 平稳传输 (适合日常建站，不抢占资源)"
+        echo -e " ${YELLOW}0.7 - 0.9${NC}: 快速响应 (推荐，自动关闭慢启动，看剧极速)"
+        echo -e " ${RED}1.0      ${NC}: 极限跑分 (双倍 BDP 冗余，强力压榨带宽)"
+        read -r -p "▶ 请输入爬升曲线调节 (0.1 - 1.0) [默认 0.79]: " ramp_up
+        ramp_up="${ramp_up// /}"
+        [ -z "$ramp_up" ] && ramp_up="0.79"
+        if awk -v r="$ramp_up" 'BEGIN{if(r>=0.1 && r<=1.0) exit 0; else exit 1}'; then
+            break
+        fi
+        echo -e "${RED}[错误] 请输入 0.1 到 1.0 之间的有效数字！${NC}"
+    done
+
+    local w_ram=$(free -m | awk '/^Mem:/{print $2}')
+    if [ -z "$w_ram" ] || [ "$w_ram" -le 0 ]; then w_ram=1024; fi
+    echo -e "\n${CYAN}>>> 系统自动探测内存: ${GREEN}${w_ram} MB${NC}"
+
+    echo -e "${CYAN}>>> 动态参数计算完毕！准备注入底层。${NC}"
     if ! confirm_action "执行并使上述 TCP 调优参数生效"; then pause_for_enter; return; fi
     
     read -r -p "▶ 是否在调优前备份当前参数？(y/n, 默认 y): " NEED_BACKUP
     NEED_BACKUP="${NEED_BACKUP// /}"
     [[ -z "$NEED_BACKUP" || "$NEED_BACKUP" =~ ^[yY]$ ]] && backup_config_silently
 
-    echo -e "\n${CYAN}>>> 正在注入底层配置...${NC}"
-    cat > "$CUSTOM_CONF" <<EOF
-fs.file-max = 1000000
-fs.inotify.max_user_instances = 8192
-net.ipv4.tcp_tw_reuse = 1
-net.ipv4.ip_local_port_range = 1024 65535
-net.ipv4.tcp_rmem = 16384 262144 8388608
-net.ipv4.tcp_wmem = 32768 524288 16777216
-net.core.somaxconn = 8192
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-net.core.wmem_default = 2097152
-net.ipv4.tcp_max_tw_buckets = 5000
-net.ipv4.tcp_max_syn_backlog = 10240
-net.core.netdev_max_backlog = 10240
-net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_keepalive_time = 600
-net.ipv4.tcp_keepalive_intvl = 30
-net.ipv4.tcp_keepalive_probes = 3
-net.ipv4.tcp_mtu_probing = 1
-net.ipv4.tcp_fastopen = 3
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
-EOF
+    echo -e "\n${CYAN}>>> 正在运行纯原生自研引擎生成配置 (0 依赖)...${NC}"
     
+    awk -v e="$local_bw" -v n="$server_bw" -v r="$latency" -v _ram="$w_ram" -v f="$ramp_up" '
+    BEGIN {
+        # 内置数学工具箱
+        function floor(x) { return int(x) }
+        function ceil(x) { y = int(x); return (x > y) ? y + 1 : y }
+        function min(x, y) { return (x < y) ? x : y }
+        function max(x, y) { return (x > y) ? x : y }
+        function clamp(val, min_val, max_val) { return max(min_val, min(val, max_val)) }
+        function log_curve(val) { base=exp(1); return log(val * (base - 1) + 1) / log(base) }
+        
+        # 核心算法计算 (与 Python 算法 1:1 等效)
+        F = clamp(r / 40, 1, 5)
+        T = clamp(2 * sqrt(e / n) * F, 1.5, 5)
+        base_bytes = floor(1024 * min(e * T, 2 * n) * 1024 / 8)
+        
+        curve_factor = log_curve(clamp(f, 0, 1))
+        B = e / n
+        if (B > 100) N = 0.06
+        else if (B > 50) N = 0.12
+        else if (B > 20) N = 0.2
+        else if (B > 10) N = 0.3
+        else if (B > 5) N = 0.5
+        else if (B > 2) N = 0.7
+        else N = 1.0
+
+        G = ceil(base_bytes * r / 1000)
+        O_lim = (_ram <= 512) ? 131072 : ((_ram <= 1024) ? 262144 : 524288)
+        O = max(G, O_lim)
+        
+        L_div = (_ram <= 512) ? 1200 : ((_ram <= 1024) ? 1000 : 800)
+        L = max(O, base_bytes * r / L_div)
+        
+        V = ceil(base_bytes * r / 1000)
+        max_mem_bytes = _ram * 1024 * 1024 * 0.125
+        H = min(ceil(2 * curve_factor * N * V), max_mem_bytes)
+        
+        if (r > 500) W = max(H, ceil(0.5 * V))
+        else W = H
+        
+        K_mult = (_ram <= 512) ? 1.5 : ((_ram <= 1024) ? 1.8 : 2.0)
+        K_min = (_ram <= 512) ? 3 : ((_ram <= 1024) ? 4 : 5)
+        K_max = (_ram <= 512) ? 6 : ((_ram <= 1024) ? 8 : 10)
+        K = clamp(K_mult * F, K_min, K_max)
+        Q = K
+        
+        X0 = 32768; X1 = 262144; X2 = min(floor(L * Q), W)
+        Y0 = 32768; Y1 = 262144; Y2 = min(floor(L * K), W)
+        
+        J = ceil(min(3 * max(50, base_bytes / 131072), 20000))
+        Z = (_ram <= 512) ? 0.8 : ((_ram <= 1024) ? 1.0 : ((_ram <= 2048) ? 1.3 : 1.5))
+        
+        ee_max = (_ram <= 512) ? 8192 : 16384
+        ee = clamp(floor(0.15 * J * Z), 2560, ee_max)
+        
+        et_max = (_ram <= 512) ? 16384 : 32768
+        et = clamp(floor(0.30 * J * Z), 8192, et_max)
+        
+        en_max = (_ram <= 512) ? 32768 : 65536
+        en = clamp(floor(0.60 * J * Z), 8192, en_max)
+        
+        mfk_ratio = (_ram <= 512) ? 0.02 : ((_ram <= 1024) ? 0.025 : ((_ram <= 2048) ? 0.03 : 0.035))
+        mfk_val = clamp(floor(1024 * _ram * mfk_ratio) + floor(0.6 * ceil(base_bytes / 1024)), 65536, 1048576)
+        
+        optmem_max = floor(min(262144, L / 2))
+        notsent_lowat = floor(min(L / 2, 524288))
+        adv_win_scale = max(2, ceil(F * 1.0))
+        max_orphans = (_ram <= 256) ? 16384 : 32768
+        
+        gc_thresh3 = (_ram <= 512) ? 2048 : 4096
+        gc_thresh2 = (_ram <= 512) ? 1024 : 2048
+        gc_thresh1 = (_ram <= 512) ? 256 : 512
+
+        # 打印生成的配置文件
+        print "# =========================================="
+        print "# VPSBox 网络调优核心逻辑 (VPSBox 自研引擎原生生成)"
+        print "# =========================================="
+        print "kernel.pid_max = 65535"
+        print "kernel.panic = 1"
+        print "kernel.sysrq = 1"
+        print "kernel.core_pattern = core_%e"
+        print "kernel.printk = 3 4 1 3"
+        print "kernel.numa_balancing = 0"
+        print "kernel.sched_autogroup_enabled = 0"
+        print "vm.swappiness = 5"
+        print "vm.dirty_ratio = 5"
+        print "vm.dirty_background_ratio = 2"
+        print "vm.panic_on_oom = 1"
+        print "vm.overcommit_memory = 1"
+        printf "vm.min_free_kbytes = %d\n", mfk_val
+        print "vm.vfs_cache_pressure = 100"
+        print "vm.dirty_expire_centisecs = 3000"
+        print "vm.dirty_writeback_centisecs = 500"
+        print "net.core.default_qdisc = fq"
+        printf "net.core.netdev_max_backlog = %d\n", et
+        printf "net.core.rmem_max = %d\n", W
+        printf "net.core.wmem_max = %d\n", W
+        printf "net.core.rmem_default = %d\n", X1
+        printf "net.core.wmem_default = %d\n", Y1
+        printf "net.core.somaxconn = %d\n", ee
+        printf "net.core.optmem_max = %d\n", optmem_max
+        print "net.ipv4.tcp_fastopen = 3"
+        print "net.ipv4.tcp_timestamps = 1"
+        print "net.ipv4.tcp_tw_reuse = 1"
+        print "net.ipv4.tcp_fin_timeout = 10"
+        print "net.ipv4.tcp_slow_start_after_idle = 0"
+        print "net.ipv4.tcp_max_tw_buckets = 32768"
+        print "net.ipv4.tcp_sack = 1"
+        print "net.ipv4.tcp_fack = 1"
+        printf "net.ipv4.tcp_rmem = %d %d %d\n", X0, X1, X2
+        printf "net.ipv4.tcp_wmem = %d %d %d\n", Y0, Y1, Y2
+        print "net.ipv4.tcp_mtu_probing = 1"
+        print "net.ipv4.tcp_congestion_control = bbr"
+        printf "net.ipv4.tcp_notsent_lowat = %d\n", notsent_lowat
+        print "net.ipv4.tcp_window_scaling = 1"
+        printf "net.ipv4.tcp_adv_win_scale = %d\n", adv_win_scale
+        print "net.ipv4.tcp_moderate_rcvbuf = 1"
+        print "net.ipv4.tcp_no_metrics_save = 1"
+        printf "net.ipv4.tcp_max_syn_backlog = %d\n", en
+        printf "net.ipv4.tcp_max_orphans = %d\n", max_orphans
+        print "net.ipv4.tcp_synack_retries = 2"
+        print "net.ipv4.tcp_syn_retries = 2"
+        print "net.ipv4.tcp_abort_on_overflow = 0"
+        print "net.ipv4.tcp_stdurg = 0"
+        print "net.ipv4.tcp_rfc1337 = 0"
+        print "net.ipv4.tcp_syncookies = 1"
+        print "net.ipv4.ip_forward = 0"
+        print "net.ipv4.ip_local_port_range = 1024 65535"
+        print "net.ipv4.ip_no_pmtu_disc = 0"
+        print "net.ipv4.route.gc_timeout = 100"
+        print "net.ipv4.neigh.default.gc_stale_time = 120"
+        printf "net.ipv4.neigh.default.gc_thresh3 = %d\n", gc_thresh3
+        printf "net.ipv4.neigh.default.gc_thresh2 = %d\n", gc_thresh2
+        printf "net.ipv4.neigh.default.gc_thresh1 = %d\n", gc_thresh1
+        print "net.ipv4.conf.all.accept_redirects = 0"
+        print "net.ipv4.conf.default.accept_redirects = 0"
+    }' > "$CUSTOM_CONF"
+
+    modprobe tcp_bbr > /dev/null 2>&1
     sysctl -p "$CUSTOM_CONF" > /dev/null 2>&1
     
     echo -e "\n${GREEN}✅ TCP 动态调优参数已成功注入并生效！${NC}"
@@ -541,7 +656,6 @@ manage_backup() {
         echo ""
         read -r -p "▶ 请选择操作 [0-3]: " b_opt
         b_opt="${b_opt// /}"
-        
         case $b_opt in
             1)
                 if ! confirm_action "备份当前网络参数"; then continue; fi
@@ -553,7 +667,6 @@ manage_backup() {
             2)
                 shopt -s nullglob; local backups=("${BACKUP_DIR}"/backup_*.conf); shopt -u nullglob
                 if [ ${#backups[@]} -eq 0 ]; then echo -e "\n${RED}无备份记录。${NC}"; pause_for_enter; continue; fi
-                
                 while true; do
                     echo -e "\n${CYAN}请选择要恢复的时间点：${NC}"
                     for i in "${!backups[@]}"; do 
@@ -561,7 +674,6 @@ manage_backup() {
                     done
                     read -r -p "▶ 请输入编号 (0取消): " res_opt
                     res_opt="${res_opt// /}"
-                    
                     if [ "$res_opt" == "0" ]; then break; fi
                     if [[ "$res_opt" =~ ^[0-9]+$ ]] && [ "$res_opt" -ge 1 ] && [ "$res_opt" -le "${#backups[@]}" ]; then
                         if ! confirm_action "覆盖当前配置并还原至此备份"; then break; fi
@@ -577,7 +689,6 @@ manage_backup() {
             3)
                 shopt -s nullglob; local backups=("${BACKUP_DIR}"/backup_*.conf); shopt -u nullglob
                 if [ ${#backups[@]} -eq 0 ]; then echo -e "\n${YELLOW}备份目录为空。${NC}"; pause_for_enter; continue; fi
-                
                 while true; do
                     echo -e "\n${CYAN}请选择要删除的备份：${NC}"
                     for i in "${!backups[@]}"; do 
@@ -586,7 +697,6 @@ manage_backup() {
                     echo -e "  ${RED}99.${NC} 清空所有"
                     read -r -p "▶ 请输入编号 (0取消): " del_opt
                     del_opt="${del_opt// /}"
-                    
                     if [ "$del_opt" == "0" ]; then break; fi
                     if [[ "$del_opt" =~ ^[0-9]+$ ]] && [ "$del_opt" -ge 1 ] && [ "$del_opt" -le "${#backups[@]}" ]; then
                         if ! confirm_action "永久删除此备份"; then break; fi
@@ -620,7 +730,6 @@ check_media_unlock() {
     pause_for_enter
 }
 
-# 节点查看与备份管理二合一
 view_deployed_nodes() {
     while true; do
         clear; print_divider; echo -e "       📋 节点状态、分享与配置备份管理    "; print_divider
@@ -794,7 +903,6 @@ delete_node() {
     pause_for_enter
 }
 
-# --- 节点部署核心引擎 ---
 append_inbound() {
     local CONFIG_FILE=$1
     local NEW_INBOUND=$2
@@ -848,7 +956,6 @@ install_reality_node() {
         read -r -p "▶ 请输入监听端口 (默认 50000, 0 取消): " PORT
         PORT="${PORT// /}"
         if [ "$PORT" == "0" ]; then return; fi; [ -z "$PORT" ] && PORT=50000
-        
         if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
             echo -e "${RED}[错误] 端口号必须是 1 到 65535 之间的纯数字！请重新输入。${NC}"
             continue
@@ -1178,7 +1285,7 @@ install_hy2_node() {
                 fuser -k 80/tcp > /dev/null 2>&1
                 sleep 2
             fi
-        
+            
             /root/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256
             CERT_RES=$?
             if [ -n "$PORT_80_SERVICE" ] && [ "$PORT_80_SERVICE" != "未知程序" ]; then
@@ -1241,7 +1348,6 @@ install_warp() {
     clear; print_divider; echo -e "       ☁️ Cloudflare WARP 一键解锁    "; print_divider
     echo -e "${YELLOW}【用途】为 VPS 获取 Cloudflare 干净 IP，解锁流媒体及规避验证码。${NC}"
     if ! confirm_action "部署 Cloudflare WARP"; then pause_for_enter; return; fi
-    
     echo -e "\n${CYAN}>>> 正在启动 WARP 脚本...${NC}"
     wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh && bash menu.sh
     pause_for_enter
@@ -1250,7 +1356,6 @@ install_warp() {
 manage_ufw() {
     while true; do
         clear; print_divider; echo -e "       🛡️ UFW 防火墙端口管理    "; print_divider
-        
         if ! command -v ufw &> /dev/null; then
             echo -e "${YELLOW}[系统] 正在自动安装 UFW 防火墙...${NC}"
             apt-get update -y > /dev/null 2>&1
@@ -1282,7 +1387,6 @@ manage_ufw() {
                     echo -e "${GREEN}✅ 端口 $port 已成功添加放行规则！${NC}"
                     ufw reload > /dev/null 2>&1
                 else
-             
                     echo -e "${RED}[错误] 端口号输入无效！${NC}"
                 fi
                 pause_for_enter
@@ -1293,8 +1397,7 @@ manage_ufw() {
                 echo ""
                 read -r -p "▶ 请输入要删除的【规则编号】(最左侧括号内的数字): " rule_num
                 rule_num="${rule_num// /}"
-       
-                 if [[ "$rule_num" =~ ^[0-9]+$ ]]; then
+                if [[ "$rule_num" =~ ^[0-9]+$ ]]; then
                     ufw --force delete "$rule_num"
                     echo -e "${GREEN}✅ 规则 $rule_num 已删除！${NC}"
                 fi
@@ -1304,13 +1407,11 @@ manage_ufw() {
                 if ! confirm_action "开启防火墙并自动放行 SSH 端口"; then continue; fi
                 CURRENT_SSH_PORT=$(ss -tlnp | grep -w sshd | awk '{print $4}' | awk -F':' '{print $NF}' | head -n 1)
                 [ -z "$CURRENT_SSH_PORT" ] && CURRENT_SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -n 1)
-        
                 [ -z "$CURRENT_SSH_PORT" ] && CURRENT_SSH_PORT=22
                 
                 echo -e "\n${YELLOW}为防止你与服务器失联，正在强制放行当前 SSH 端口 ($CURRENT_SSH_PORT)...${NC}"
                 ufw allow "$CURRENT_SSH_PORT"/tcp
                 ufw --force enable
-      
                 echo -e "${GREEN}✅ 防火墙已成功开启！${NC}"
                 pause_for_enter
                 ;;
@@ -1354,7 +1455,6 @@ uninstall_vpsbox() {
     print_separator
     echo -e "${YELLOW}【警告】此操作将彻底删除 VPSBox 的快捷命令、本地备份及所有缓存日志。${NC}"
     if ! confirm_action "彻底卸载 VPSBox"; then return; fi
-    
     rm -f /usr/local/bin/vpsbox
     rm -rf /etc/vpsbox_backups
     rm -f "$NODE_RECORD_FILE"
@@ -1371,7 +1471,7 @@ while true; do
     clear
     echo ""
     print_divider
-    echo -e "${PURPLE}           VPS Box 全能服务器管家与部署工具箱 v2.5.0 ${NC}"
+    echo -e "${PURPLE}           VPS Box 节点部署与服务器管家 v2.5.2 ${NC}"
     print_divider
     
     echo -e "  公网 IP  : ${YELLOW}${SERVER_IP} ${CYAN}[${IP_FORMAT}]${NC}"
@@ -1388,20 +1488,20 @@ while true; do
     echo -e "  ${GREEN}9.${NC} 修改 SSH 默认登录端口"
     
     echo -e "\n  ${CYAN}【网络协议与性能极速优化】${NC}"
-    echo -e "  ${GREEN}10.${NC} 自定义 TCP 自动调优注入       ${YELLOW}(智能动态适应，提升吞吐)${NC}"
-    echo -e "  ${GREEN}11.${NC} 网络调优参数备份/还原管理\n  ${GREEN}12.${NC} BBR 拥塞控制智能管理中心      ${YELLOW}[支持 Google BBRv3]${NC}"
+    echo -e "  ${GREEN}10.${NC} 自研动态 TCP 智能调优引擎     ${YELLOW}(极速提升网络吞吐量)${NC}"
+    echo -e "  ${GREEN}11.${NC} 网络调优参数备份/还原管理\n  ${GREEN}12.${NC} BBR 拥塞控制智能管理中心      ${YELLOW}(支持最新版 BBRv3)${NC}"
     
     echo -e "\n  ${CYAN}【流媒体检测与节点防冲突部署】${NC}"
     echo -e "  ${GREEN}13.${NC} ip质量检测与流媒体解锁"
-    echo -e "  ${GREEN}14.${NC} 部署 VLESS-Reality            ${YELLOW}(直连低延迟 / 强力防封锁)${NC}"
-    echo -e "  ${GREEN}15.${NC} 部署 VLESS-WS-TLS             ${YELLOW}(套 CDN 优选 IP / 拯救被墙机器)${NC}"
-    echo -e "  ${GREEN}16.${NC} 部署 Hysteria2                ${YELLOW}(UDP 暴力发包 / 抢占高带宽)${NC}"
+    echo -e "  ${GREEN}14.${NC} 部署 VLESS-Reality            ${YELLOW}(防封锁 / 低延迟直连)${NC}"
+    echo -e "  ${GREEN}15.${NC} 部署 VLESS-WS-TLS             ${YELLOW}(套 CDN 救活被墙 IP)${NC}"
+    echo -e "  ${GREEN}16.${NC} 部署 Hysteria2                ${YELLOW}(UDP 协议提速)${NC}"
     echo -e "  ${GREEN}17.${NC} 查看已部署节点与备份管理"
     echo -e "  ${GREEN}18.${NC} 删除指定的已部署节点"
     
     echo -e "\n  ${CYAN}【附加实用工具与安全拓展】${NC}"
-    echo -e "  ${GREEN}19.${NC} Cloudflare WARP 一键解锁      ${YELLOW}(获取干净 IP / 规避验证码)${NC}"
-    echo -e "  ${GREEN}20.${NC} UFW 防火墙简单端口管理        ${YELLOW}(防呆管理 / 一键放行端口)${NC}"
+    echo -e "  ${GREEN}19.${NC} Cloudflare WARP 一键解锁      ${YELLOW}(解锁流媒体与 AI)${NC}"
+    echo -e "  ${GREEN}20.${NC} UFW 防火墙简单端口管理        ${YELLOW}(一键放行端口)${NC}"
     echo -e "  ${GREEN}21.${NC} 一键更新 VPSBox 脚本自身"
     echo -e "  ${RED}99.${NC} 彻底卸载 VPSBox 及系统残留"
 
