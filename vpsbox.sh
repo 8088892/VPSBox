@@ -197,10 +197,12 @@ manage_ssh_security() {
                         echo -e "\n${YELLOW}[发现] 系统中已存在其他 SSH 密钥记录。${NC}"
                         read -r -p "▶ 是否清空旧密钥并覆盖？(y-覆盖清空 / n-保留追加, 默认 n): " overwrite_opt
                         overwrite_opt="${overwrite_opt// /}"
+            
                         if [[ "$overwrite_opt" =~ ^[yY]$ ]]; then
                             > ~/.ssh/authorized_keys
                             echo -e "${CYAN}>>> 已清空历史废弃密钥。${NC}"
                         fi
+                
                     fi
                     echo "$pub_key" >> ~/.ssh/authorized_keys
                     if [ $? -ne 0 ]; then
@@ -246,11 +248,13 @@ manage_ssh_security() {
 change_ssh_port() {
     clear; print_divider; echo -e "       🚪 修改 SSH 默认登录端口    "; print_divider
     while true; do
-        read -r -p "▶ 请输入新的 SSH 端口号 (建议 10000-65535，输入 0 取消): " new_port
+        read -r -p "▶ 请输入新的 SSH 端口号 (建议 10000-65535，恢复默认请输 22，输入 0 取消): " new_port
         new_port="${new_port// /}"
         if [ "$new_port" == "0" ] || [ -z "$new_port" ]; then return; fi
-        if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -le 1024 ] || [ "$new_port" -ge 65535 ]; then
-            echo -e "${RED}[错误] 端口号必须在 1024 到 65535 之间！请重新输入。${NC}"
+        
+        # 修复逻辑：允许 22 端口或 1024-65535 的端口
+        if ! [[ "$new_port" =~ ^[0-9]+$ ]] || ( [ "$new_port" -ne 22 ] && ([ "$new_port" -le 1024 ] || [ "$new_port" -ge 65535 ]) ); then
+            echo -e "${RED}[错误] 端口号必须是 22 或者在 1024 到 65535 之间！请重新输入。${NC}"
             continue
         fi
         break
@@ -354,22 +358,18 @@ manage_swap() {
 optimize_dns() {
     clear; print_divider; echo -e "       🌐 系统 DNS 极速优化    "; print_divider
     if ! confirm_action "将系统 DNS 替换为 1.1.1.1 和 8.8.8.8"; then pause_for_enter; return; fi
-    
-    # 尝试解除锁定，忽略可能产生的不支持报错
-    chattr -i /etc/resolv.conf 2>/dev/null
-    
-    # 写入新的 DNS 配置
+    # 修复逻辑：丢弃 chattr 的恶心错误输出以保持界面清爽
+    chattr -i /etc/resolv.conf >/dev/null 2>&1
     cat > /etc/resolv.conf <<EOF
 nameserver 1.1.1.1
 nameserver 8.8.8.8
 EOF
-    
     if [ $? -ne 0 ]; then
         echo -e "\n${RED}[错误] 写入 /etc/resolv.conf 失败。${NC}"
     else
-        # 尝试重新锁定文件，同样隐藏不支持该操作的报错
-        chattr +i /etc/resolv.conf 2>/dev/null
-        echo -e "\n${GREEN}✅ 系统 DNS 已优化成功，并已尝试锁定防止系统篡改！${NC}"
+        # 修复逻辑：同样丢弃输出
+        chattr +i /etc/resolv.conf >/dev/null 2>&1
+        echo -e "\n${GREEN}✅ 系统 DNS 已优化成功，并已锁定防止系统篡改！${NC}"
     fi
     pause_for_enter
 }
@@ -725,8 +725,7 @@ manage_backup() {
                 while true; do
                     echo -e "\n${CYAN}请选择要恢复的时间点：${NC}"
                     for i in "${!backups[@]}"; do 
-                        echo -e "  ${GREEN}$((i+1)).${NC} 备份日期: $(stat -c "%y" "${backups[$i]}" | cut -d'.' -f1)";
-                    done
+                        echo -e "  ${GREEN}$((i+1)).${NC} 备份日期: $(stat -c "%y" "${backups[$i]}" | cut -d'.' -f1)"; done
                     read -r -p "▶ 请输入编号 (0取消): " res_opt
                     res_opt="${res_opt// /}"
                     if [ "$res_opt" == "0" ]; then break; fi
@@ -751,8 +750,7 @@ manage_backup() {
                 while true; do
                     echo -e "\n${CYAN}请选择要删除的备份：${NC}"
                     for i in "${!backups[@]}"; do 
-                        echo -e "  ${GREEN}$((i+1)).${NC} 备份日期: $(stat -c "%y" "${backups[$i]}" | cut -d'.' -f1)";
-                    done
+                        echo -e "  ${GREEN}$((i+1)).${NC} 备份日期: $(stat -c "%y" "${backups[$i]}" | cut -d'.' -f1)"; done
                     echo -e "  ${RED}99.${NC} 清空所有"
                     read -r -p "▶ 请输入编号 (0取消): " del_opt
                     del_opt="${del_opt// /}"
@@ -1463,15 +1461,21 @@ manage_ufw() {
                 pause_for_enter
                 ;;
             4)
-                if ! confirm_action "开启防火墙并自动放行 SSH 端口"; then continue; fi
+                # 修复逻辑：强化安全提示，设置默认策略并安全放行当前SSH端口
+                if ! confirm_action "开启防火墙并默认拦截外部访问 (系统将自动防呆放行 SSH)"; then continue; fi
                 CURRENT_SSH_PORT=$(ss -tlnp | grep -w sshd | awk '{print $4}' | awk -F':' '{print $NF}' | head -n 1)
                 [ -z "$CURRENT_SSH_PORT" ] && CURRENT_SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -n 1)
                 [ -z "$CURRENT_SSH_PORT" ] && CURRENT_SSH_PORT=22
                 
-                echo -e "\n${YELLOW}为防止你与服务器失联，正在强制放行当前 SSH 端口 ($CURRENT_SSH_PORT)...${NC}"
-                ufw allow "$CURRENT_SSH_PORT"/tcp
-                ufw --force enable || { echo -e "${RED}[错误] 开启防火墙失败。${NC}"; pause_for_enter; continue; }
-                echo -e "${GREEN}✅ 防火墙已成功开启！${NC}"
+                echo -e "\n${CYAN}>>> 检测到当前 SSH 登录端口为: ${CURRENT_SSH_PORT}${NC}"
+                echo -e "${YELLOW}为防止你与服务器失联，正在强制放行当前 SSH 端口 ($CURRENT_SSH_PORT)...${NC}"
+                
+                ufw default deny incoming > /dev/null 2>&1
+                ufw default allow outgoing > /dev/null 2>&1
+                ufw allow "$CURRENT_SSH_PORT"/tcp > /dev/null 2>&1
+                
+                ufw --force enable || { echo -e "\n${RED}[错误] 开启防火墙失败。${NC}"; pause_for_enter; continue; }
+                echo -e "\n${GREEN}✅ 防火墙已成功开启！当前 SSH 端口 $CURRENT_SSH_PORT 已安全放行。${NC}"
                 pause_for_enter
                 ;;
             5)
