@@ -2,7 +2,7 @@
 
 # =====================================================================
 # 项目名称: VPS Box (轻量级节点管理与网络优化引擎)
-# 版本: v2.5.2 
+# 版本: v2.5.3 (Bug修复与严格错误提示版)
 # =====================================================================
 
 RED='\033[0;31m'
@@ -120,8 +120,12 @@ system_update() {
     if ! confirm_action "更新系统与安装组件"; then pause_for_enter; return; fi
     echo -e "\n${CYAN}>>> 正在更新软件源并升级系统组件 (这可能需要几分钟)...${NC}"
     apt-get update -y && apt-get upgrade -y
+    if [ $? -ne 0 ]; then echo -e "\n${RED}[错误] 升级系统组件失败，请检查网络或源状态。${NC}"; pause_for_enter; return; fi
+    
     echo -e "\n${CYAN}>>> 正在安装必备工具包...${NC}"
     apt-get install -y curl wget sudo unzip tar openssl socat psmisc iputils-ping jq gnupg2 dnsutils bsdutils qrencode
+    if [ $? -ne 0 ]; then echo -e "\n${RED}[错误] 必备工具包安装失败。${NC}"; pause_for_enter; return; fi
+    
     echo -e "\n${GREEN}✅ 系统更新与组件安装完毕！${NC}"
     pause_for_enter
 }
@@ -130,11 +134,14 @@ system_clean() {
     clear; print_divider; echo -e "       🧹 系统垃圾与废弃依赖清理    "; print_divider
     if ! confirm_action "清理系统垃圾与冗余日志"; then pause_for_enter; return; fi
     echo -e "\n${CYAN}>>> 正在卸载无用的旧依赖包...${NC}"
-    apt-get autoremove -y
+    apt-get autoremove -y || { echo -e "\n${RED}[错误] 卸载旧依赖包失败！${NC}"; pause_for_enter; return; }
+    
     echo -e "\n${CYAN}>>> 正在清理系统下载缓存...${NC}"
-    apt-get clean -y
+    apt-get clean -y || echo -e "${RED}[错误] 缓存清理异常。${NC}"
+    
     echo -e "\n${CYAN}>>> 正在清理超过 7 个月的系统日志...${NC}"
-    journalctl --vacuum-time=7d >/dev/null 2>&1
+    journalctl --vacuum-time=7d >/dev/null 2>&1 || echo -e "${RED}[错误] 日志清理异常。${NC}"
+    
     echo -e "\n${GREEN}✅ 系统清理完毕，存储空间已释放！${NC}"
     pause_for_enter
 }
@@ -196,8 +203,12 @@ manage_ssh_security() {
                         fi
                     fi
                     echo "$pub_key" >> ~/.ssh/authorized_keys
-                    chmod 600 ~/.ssh/authorized_keys
-                    echo -e "\n${GREEN}✅ 密钥已成功添加！请先测试使用密钥登录，再关闭密码登录功能。${NC}"
+                    if [ $? -ne 0 ]; then
+                        echo -e "\n${RED}[错误] 写入密钥失败，请检查系统权限或磁盘空间。${NC}"
+                    else
+                        chmod 600 ~/.ssh/authorized_keys
+                        echo -e "\n${GREEN}✅ 密钥已成功添加！请先测试使用密钥登录，再关闭密码登录功能。${NC}"
+                    fi
                     pause_for_enter
                     break
                 done
@@ -205,20 +216,24 @@ manage_ssh_security() {
             2)
                 if ! confirm_action "删除系统中所有的 SSH 公钥"; then continue; fi
                 > ~/.ssh/authorized_keys
-                echo -e "\n${GREEN}✅ 所有 SSH 公钥已彻底清空！${NC}"
+                if [ $? -eq 0 ]; then
+                    echo -e "\n${GREEN}✅ 所有 SSH 公钥已彻底清空！${NC}"
+                else
+                    echo -e "\n${RED}[错误] 清空密钥失败！${NC}"
+                fi
                 pause_for_enter
                 ;;
             3)
                 if ! confirm_action "禁用密码登录 (⚠️ 请确保您已成功配置密钥)"; then continue; fi
                 sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication no/g' /etc/ssh/sshd_config
-                systemctl restart sshd
+                systemctl restart sshd || { echo -e "\n${RED}[错误] SSH 服务重启失败，设置可能未生效。${NC}"; pause_for_enter; continue; }
                 echo -e "\n${GREEN}✅ 密码登录已成功禁用！现在只能通过密钥连接服务器。${NC}"
                 pause_for_enter
                 ;;
             4)
                 if ! confirm_action "开启密码登录"; then continue; fi
                 sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication yes/g' /etc/ssh/sshd_config
-                systemctl restart sshd
+                systemctl restart sshd || { echo -e "\n${RED}[错误] SSH 服务重启失败。${NC}"; pause_for_enter; continue; }
                 echo -e "\n${GREEN}✅ 密码登录已成功开启！${NC}"
                 pause_for_enter
                 ;;
@@ -243,8 +258,12 @@ change_ssh_port() {
     if ! confirm_action "将 SSH 端口修改为 $new_port"; then pause_for_enter; return; fi
     sed -i "s/^#\?Port .*/Port $new_port/g" /etc/ssh/sshd_config
     systemctl restart sshd
-    echo -e "\n${GREEN}✅ SSH 端口已修改为 $new_port！${NC}"
-    echo -e "${RED}⚠️ 警告: 请确保您的云服务商防火墙已放行 $new_port 端口，否则下次将无法连接！${NC}"
+    if [ $? -ne 0 ]; then
+        echo -e "\n${RED}[错误] SSH 服务重启失败，端口修改可能未生效。${NC}"
+    else
+        echo -e "\n${GREEN}✅ SSH 端口已修改为 $new_port！${NC}"
+        echo -e "${RED}⚠️ 警告: 请确保您的云服务商防火墙已放行 $new_port 端口，否则下次将无法连接！${NC}"
+    fi
     pause_for_enter
 }
 
@@ -266,7 +285,7 @@ change_hostname() {
         break
     done
     if ! confirm_action "将主机名修改为 $new_hostname"; then pause_for_enter; return; fi
-    hostnamectl set-hostname "$new_hostname"
+    hostnamectl set-hostname "$new_hostname" || { echo -e "\n${RED}[错误] 修改主机名失败。${NC}"; pause_for_enter; return; }
     sed -i "s/127.0.1.1.*/127.0.1.1 $new_hostname/g" /etc/hosts
     echo -e "\n${GREEN}✅ 主机名已修改为 $new_hostname！(重新连接 SSH 后即可看到变化)${NC}"
     pause_for_enter
@@ -275,7 +294,7 @@ change_hostname() {
 set_china_timezone() {
     clear; print_divider; echo -e "       🕒 修改系统时区为 [北京时间] (Asia/Shanghai)    "; print_divider
     if ! confirm_action "修改系统时区为中国北京时间"; then pause_for_enter; return; fi
-    timedatectl set-timezone Asia/Shanghai
+    timedatectl set-timezone Asia/Shanghai || { echo -e "\n${RED}[错误] 设置时区失败，请检查系统 timedatectl 服务。${NC}"; pause_for_enter; return; }
     CURRENT_TZ="Asia/Shanghai"
     echo -e "\n${GREEN}✅ 系统时区已同步为中国北京时间。${NC}"
     pause_for_enter
@@ -306,14 +325,15 @@ manage_swap() {
                 echo -e "\n${CYAN}>>> 正在配置 ${input_size}MB Swap，请稍候...${NC}"
                 swapoff -a
                 rm -f /swapfile
-                dd if=/dev/zero of=/swapfile bs=1M count=$input_size status=progress
+                dd if=/dev/zero of=/swapfile bs=1M count=$input_size status=progress || { echo -e "${RED}[错误] 磁盘空间不足或无权限！${NC}"; pause_for_enter; return; }
                 chmod 600 /swapfile
-                mkswap /swapfile
-                swapon /swapfile
+                mkswap /swapfile || { echo -e "${RED}[错误] mkswap 初始化失败！${NC}"; pause_for_enter; return; }
+                swapon /swapfile || { echo -e "${RED}[错误] 挂载 Swap 失败！${NC}"; pause_for_enter; return; }
                 if ! grep -q "/swapfile" /etc/fstab; then
                     echo "/swapfile none swap sw 0 0" >> /etc/fstab
                 fi
                 echo -e "${GREEN}✅ Swap 设置成功！${NC}"
+                pause_for_enter
                 return
                 ;;
             2)
@@ -322,6 +342,7 @@ manage_swap() {
                 rm -f /swapfile
                 sed -i '/\/swapfile/d' /etc/fstab
                 echo -e "\n${GREEN}✅ Swap 已彻底关闭并清理！${NC}"
+                pause_for_enter
                 return
                 ;;
             0) return ;;
@@ -338,8 +359,12 @@ optimize_dns() {
 nameserver 1.1.1.1
 nameserver 8.8.8.8
 EOF
-    chattr +i /etc/resolv.conf
-    echo -e "\n${GREEN}✅ 系统 DNS 已优化成功，并已锁定防止系统篡改！${NC}"
+    if [ $? -ne 0 ]; then
+        echo -e "\n${RED}[错误] 写入 /etc/resolv.conf 失败。${NC}"
+    else
+        chattr +i /etc/resolv.conf
+        echo -e "\n${GREEN}✅ 系统 DNS 已优化成功，并已锁定防止系统篡改！${NC}"
+    fi
     pause_for_enter
 }
 
@@ -378,14 +403,19 @@ manage_bbr() {
             1)
                 if ! confirm_action "立即开启系统原生 BBRv1"; then continue; fi
                 echo -e "\n${CYAN}[正在配置] 启用系统原生 BBRv1...${NC}"
-                modprobe tcp_bbr > /dev/null 2>&1
+                modprobe tcp_bbr > /dev/null 2>&1 || echo -e "${YELLOW}[提示] modprobe tcp_bbr 执行失败，但配置仍会继续。${NC}"
                 echo "tcp_bbr" > /etc/modules-load.d/bbr.conf
                 cat > /etc/sysctl.d/99-bbr.conf <<EOF
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 EOF
                 sysctl -p /etc/sysctl.d/99-bbr.conf > /dev/null 2>&1
-                echo -e "${GREEN}✅ BBRv1 已成功开启！${NC}"; sleep 2
+                if [ $? -eq 0 ]; then
+                    echo -e "${GREEN}✅ BBRv1 已成功开启！${NC}";
+                else
+                    echo -e "${RED}[错误] BBR 参数应用失败。${NC}";
+                fi
+                sleep 2
                 ;;
             2)
                 if ! command -v apt &> /dev/null; then echo -e "\n${RED}[错误] BBRv3 安装仅支持 Debian/Ubuntu。${NC}"; sleep 2; continue; fi
@@ -401,7 +431,8 @@ EOF
                 fi
                 echo 'deb [signed-by=/usr/share/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' > /etc/apt/sources.list.d/xanmod-release.list
                 echo -e "\n${CYAN}>>> 正在更新软件源...${NC}"
-                apt update -y
+                apt update -y || { echo -e "\n${RED}[错误] 源更新失败。${NC}"; sleep 2; continue; }
+                
                 echo -e "\n${CYAN}>>> 正在安装 XanMod BBRv3 内核 (x64v3 标准版)...${NC}"
                 apt install -y linux-xanmod-x64v3
                 
@@ -420,7 +451,7 @@ EOF
                         echo -e "${YELLOW}请记得稍后手动执行 reboot 命令使新内核生效。${NC}"
                         sleep 2
                     fi
-                 else
+                else
                     echo -e "\n${RED}[错误] 内核安装失败！请查看上方 apt 的具体报错。${NC}"
                     sleep 3
                 fi
@@ -436,7 +467,7 @@ EOF
                     fi
                 fi
                 echo -e "\n${CYAN}>>> 正在清理内核文件...${NC}"
-                apt purge -y "^linux-image.*xanmod.*" "^linux-headers.*xanmod.*"
+                apt purge -y "^linux-image.*xanmod.*" "^linux-headers.*xanmod.*" || { echo -e "${RED}[错误] 清理旧内核失败。${NC}"; sleep 2; continue; }
                 rm -f /etc/apt/sources.list.d/xanmod-release.list /usr/share/keyrings/xanmod-archive-keyring.gpg
                 apt update -y > /dev/null 2>&1; update-grub
                 echo -e "\n${GREEN}✅ 卸载成功！即将重启服务器回退至系统原生内核...${NC}"
@@ -495,16 +526,16 @@ apply_tuning() {
 
     echo -e "\n${CYAN}>>> 正在运行纯原生自研引擎生成配置 (0 依赖)...${NC}"
     
+    # 【修复重点】将自定义函数放在 BEGIN 外面，解决 standard awk 的语法兼容性错误
     awk -v e="$local_bw" -v n="$server_bw" -v r="$latency" -v _ram="$w_ram" -v f="$ramp_up" '
+    function floor(x) { return int(x) }
+    function ceil(x) { y = int(x); return (x > y) ? y + 1 : y }
+    function min(x, y) { return (x < y) ? x : y }
+    function max(x, y) { return (x > y) ? x : y }
+    function clamp(val, min_val, max_val) { return max(min_val, min(val, max_val)) }
+    function log_curve(val) { base=exp(1); return log(val * (base - 1) + 1) / log(base) }
+    
     BEGIN {
-        # 内置数学工具箱
-        function floor(x) { return int(x) }
-        function ceil(x) { y = int(x); return (x > y) ? y + 1 : y }
-        function min(x, y) { return (x < y) ? x : y }
-        function max(x, y) { return (x > y) ? x : y }
-        function clamp(val, min_val, max_val) { return max(min_val, min(val, max_val)) }
-        function log_curve(val) { base=exp(1); return log(val * (base - 1) + 1) / log(base) }
-        
         # 核心算法计算 (与 Python 算法 1:1 等效)
         F = clamp(r / 40, 1, 5)
         T = clamp(2 * sqrt(e / n) * F, 1.5, 5)
@@ -632,18 +663,32 @@ apply_tuning() {
         print "net.ipv4.conf.default.accept_redirects = 0"
     }' > "$CUSTOM_CONF"
 
+    # 严格检验是否生成成功
+    if [ $? -ne 0 ] || [ ! -s "$CUSTOM_CONF" ]; then
+        echo -e "\n${RED}[错误] 动态参数计算或配置生成失败！可能是系统环境不兼容 awk。${NC}"
+        pause_for_enter; return;
+    fi
+
     modprobe tcp_bbr > /dev/null 2>&1
     sysctl -p "$CUSTOM_CONF" > /dev/null 2>&1
     
-    echo -e "\n${GREEN}✅ TCP 动态调优参数已成功注入并生效！${NC}"
-    echo -e "⚡ 当前 BBR 状态: $(get_bbr_status)"
+    if [ $? -ne 0 ]; then
+        echo -e "\n${RED}[错误] TCP 参数注入系统失败，请检查您的系统内核是否支持这些高级参数！${NC}"
+    else
+        echo -e "\n${GREEN}✅ TCP 动态调优参数已成功注入并生效！${NC}"
+        echo -e "⚡ 当前 BBR 状态: $(get_bbr_status)"
+    fi
     pause_for_enter
 }
 
 backup_config_silently() {
     local ts=$(date +"%Y%m%d_%H%M%S")
     sysctl -a --pattern net.ipv4.tcp | grep -E "rmem|wmem|congestion|sack" > "${BACKUP_DIR}/backup_${ts}.conf" 2>/dev/null
-    echo -e "${GREEN}✅ 参数已自动备份。${NC}"
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✅ 参数已自动备份。${NC}"
+    else
+        echo -e "${YELLOW}[警告] 自动备份异常或不支持当前系统。${NC}"
+    fi
 }
 
 manage_backup() {
@@ -661,7 +706,11 @@ manage_backup() {
                 if ! confirm_action "备份当前网络参数"; then continue; fi
                 local ts=$(date +"%Y%m%d_%H%M%S")
                 sysctl -a --pattern net.ipv4.tcp | grep -E "rmem|wmem|congestion|sack" > "${BACKUP_DIR}/backup_${ts}.conf" 2>/dev/null
-                echo -e "\n${GREEN}✅ TCP 参数备份成功！${NC}"
+                if [ $? -eq 0 ]; then
+                    echo -e "\n${GREEN}✅ TCP 参数备份成功！${NC}"
+                else
+                    echo -e "\n${RED}[错误] 备份执行失败。${NC}"
+                fi
                 pause_for_enter
                 ;;
             2)
@@ -678,7 +727,11 @@ manage_backup() {
                     if [[ "$res_opt" =~ ^[0-9]+$ ]] && [ "$res_opt" -ge 1 ] && [ "$res_opt" -le "${#backups[@]}" ]; then
                         if ! confirm_action "覆盖当前配置并还原至此备份"; then break; fi
                         sysctl -p "${backups[$((res_opt-1))]}" > /dev/null 2>&1
-                        rm -f "$CUSTOM_CONF"; echo -e "\n${GREEN}✅ 参数已成功还原！${NC}"
+                        if [ $? -eq 0 ]; then
+                            rm -f "$CUSTOM_CONF"; echo -e "\n${GREEN}✅ 参数已成功还原！${NC}"
+                        else
+                            echo -e "\n${RED}[错误] 还原参数失败。${NC}"
+                        fi
                         pause_for_enter
                         break
                     else
@@ -726,7 +779,7 @@ manage_backup() {
 check_media_unlock() {
     clear; print_divider; echo -e "       📺 ip质量检测与流媒体解锁    "; print_divider
     echo -e "${CYAN}>>> 正在载入权威检测引擎，请稍候...${NC}\n"
-    bash <(curl -sL https://Check.Place) -I
+    bash <(curl -sL https://Check.Place) -I || echo -e "\n${RED}[错误] 脚本载入失败，请检查您的服务器网络与墙外连通性。${NC}"
     pause_for_enter
 }
 
@@ -780,7 +833,7 @@ view_deployed_nodes() {
             echo -e "\n${CYAN}>>> 节点分享链接：${NC}"
             echo -e "${target_link}\n"
             echo -e "${YELLOW}>>> 节点二维码 (紧凑版，长内容自动换行无影响)：${NC}"
-            qrencode -t UTF8 -m 1 "$target_link"
+            qrencode -t UTF8 -m 1 "$target_link" || echo -e "${RED}[错误] 二维码生成失败，请确认系统是否安装 qrencode。${NC}"
             pause_for_enter
         elif [[ "$vn_opt" =~ ^[bB]$ ]]; then
             if ! confirm_action "备份当前节点配置"; then continue; fi
@@ -814,7 +867,7 @@ view_deployed_nodes() {
                 [ -f "$sel_bk/xray_config.json" ] && cp "$sel_bk/xray_config.json" /usr/local/etc/xray/config.json && systemctl restart xray
                 [ -f "$sel_bk/singbox_config.json" ] && cp "$sel_bk/singbox_config.json" /etc/sing-box/config.json && systemctl restart sing-box
                 [ -f "$sel_bk/vpsbox_nodes.txt" ] && cp "$sel_bk/vpsbox_nodes.txt" "$NODE_RECORD_FILE"
-                echo -e "\n${GREEN}✅ 节点配置已成功还原！服务已重启。${NC}"
+                echo -e "\n${GREEN}✅ 节点配置已成功还原！服务已尝试重启。${NC}"
                 pause_for_enter
             else
                 echo -e "${RED}[错误] 输入无效编号！${NC}"; sleep 1
@@ -1027,7 +1080,7 @@ install_reality_node() {
         qrencode -t UTF8 -m 1 "$LINK"
         echo "${CORE_NAME}-Reality | 端口:${PORT} | ${LINK}" >> "$NODE_RECORD_FILE"
     else
-        echo -e "\n${RED}[错误] 配置校验失败或拒绝启动，未保存任何变更！${NC}"
+        echo -e "\n${RED}[错误] 配置校验失败或服务拒绝启动，未保存任何变更！${NC}"
     fi
     pause_for_enter
 }
@@ -1181,7 +1234,7 @@ install_ws_tls_node() {
         qrencode -t UTF8 -m 1 "$LINK"
         echo "${CORE_NAME}-WS-TLS | 端口:${WS_PORT} | ${LINK}" >> "$NODE_RECORD_FILE"
     else
-        echo -e "\n${RED}[错误] 配置拒绝启动，未保存任何变更！${NC}"
+        echo -e "\n${RED}[错误] 配置服务拒绝启动，未保存任何变更！${NC}"
     fi
     pause_for_enter
 }
@@ -1335,7 +1388,7 @@ install_hy2_node() {
         qrencode -t UTF8 -m 1 "$LINK"
         echo "${CORE_NAME}-Hys2 | 端口:${HY2_PORT} | ${LINK}" >> "$NODE_RECORD_FILE"
     else
-        echo -e "\n${RED}[错误] 配置拒绝启动，未保存任何变更！${NC}"
+        echo -e "\n${RED}[错误] 配置服务拒绝启动，未保存任何变更！${NC}"
     fi
     pause_for_enter
 }
@@ -1349,7 +1402,7 @@ install_warp() {
     echo -e "${YELLOW}【用途】为 VPS 获取 Cloudflare 干净 IP，解锁流媒体及规避验证码。${NC}"
     if ! confirm_action "部署 Cloudflare WARP"; then pause_for_enter; return; fi
     echo -e "\n${CYAN}>>> 正在启动 WARP 脚本...${NC}"
-    wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh && bash menu.sh
+    wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh && bash menu.sh || echo -e "\n${RED}[错误] WARP 脚本下载或执行失败，请检查网络。${NC}"
     pause_for_enter
 }
 
@@ -1359,7 +1412,7 @@ manage_ufw() {
         if ! command -v ufw &> /dev/null; then
             echo -e "${YELLOW}[系统] 正在自动安装 UFW 防火墙...${NC}"
             apt-get update -y > /dev/null 2>&1
-            apt-get install ufw -y > /dev/null 2>&1
+            apt-get install ufw -y > /dev/null 2>&1 || echo -e "${RED}[错误] UFW 安装失败。${NC}"
         fi
         
         echo -e "  ${GREEN}1.${NC} 查看当前防火墙状态与已放行端口"
@@ -1376,7 +1429,7 @@ manage_ufw() {
         case $ufw_opt in
             1) 
                 echo -e "\n${CYAN}>>> 防火墙状态：${NC}"
-                ufw status numbered
+                ufw status numbered || echo -e "${RED}[错误] 读取状态失败。${NC}"
                 pause_for_enter
                 ;;
             2)
@@ -1398,8 +1451,8 @@ manage_ufw() {
                 read -r -p "▶ 请输入要删除的【规则编号】(最左侧括号内的数字): " rule_num
                 rule_num="${rule_num// /}"
                 if [[ "$rule_num" =~ ^[0-9]+$ ]]; then
-                    ufw --force delete "$rule_num"
-                    echo -e "${GREEN}✅ 规则 $rule_num 已删除！${NC}"
+                    ufw --force delete "$rule_num" || echo -e "${RED}[错误] 删除规则失败。${NC}"
+                    echo -e "${GREEN}✅ 规则 $rule_num 已尝试删除！${NC}"
                 fi
                 pause_for_enter
                 ;;
@@ -1411,13 +1464,13 @@ manage_ufw() {
                 
                 echo -e "\n${YELLOW}为防止你与服务器失联，正在强制放行当前 SSH 端口 ($CURRENT_SSH_PORT)...${NC}"
                 ufw allow "$CURRENT_SSH_PORT"/tcp
-                ufw --force enable
+                ufw --force enable || { echo -e "${RED}[错误] 开启防火墙失败。${NC}"; pause_for_enter; continue; }
                 echo -e "${GREEN}✅ 防火墙已成功开启！${NC}"
                 pause_for_enter
                 ;;
             5)
                 if ! confirm_action "彻底关闭防火墙"; then continue; fi
-                ufw disable
+                ufw disable || { echo -e "${RED}[错误] 关闭防火墙失败。${NC}"; pause_for_enter; continue; }
                 echo -e "${GREEN}✅ 防火墙已完全关闭！${NC}"
                 pause_for_enter
                 ;;
@@ -1471,7 +1524,7 @@ while true; do
     clear
     echo ""
     print_divider
-    echo -e "${PURPLE}           VPS Box 节点部署与服务器管家 v2.5.2 ${NC}"
+    echo -e "${PURPLE}           VPS Box 节点部署与服务器管家 v2.5.3 ${NC}"
     print_divider
     
     echo -e "  公网 IP  : ${YELLOW}${SERVER_IP} ${CYAN}[${IP_FORMAT}]${NC}"
