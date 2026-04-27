@@ -2,7 +2,7 @@
 
 # =====================================================================
 # 项目名称: VPS Box (轻量级节点管理与网络优化引擎)
-# 版本: v2.5.5 (增加 CF API Token 获取向导)
+# 版本: v2.5.5 (融合 TCP V9 终极 AWK 算法版)
 # =====================================================================
 
 RED='\033[0;31m'
@@ -429,10 +429,8 @@ net.ipv4.tcp_congestion_control=bbr
 EOF
                 sysctl -p /etc/sysctl.d/99-bbr.conf > /dev/null 2>&1
                 if [ $? -eq 0 ]; then
-                    echo -e "${GREEN}✅ BBRv1 已成功开启！${NC}";
-                else
-                    echo -e "${RED}[错误] BBR 参数应用失败。${NC}";
-                fi
+                    echo -e "${GREEN}✅ BBRv1 已成功开启！${NC}"; else
+                    echo -e "${RED}[错误] BBR 参数应用失败。${NC}"; fi
                 sleep 2
                 ;;
             2)
@@ -504,9 +502,9 @@ EOF
 }
 
 apply_tuning() {
-    clear; print_divider; echo -e "       自研动态 TCP 智能调优引擎    "; print_divider
+    clear; print_divider; echo -e "       自研动态 TCP 智能调优引擎 (V9 终极版)    "; print_divider
     echo -e "${YELLOW}【模式说明】${NC}"
-    echo -e "  基于 VPSBox 自研高级算法，智能感知硬件内存，自适应生成极致 TCP 参数。"
+    echo -e "  基于 V9 终极算法，智能感知硬件内存与延迟，自适应生成极致 TCP 参数。"
     print_separator
     
     local local_bw server_bw latency ramp_up
@@ -524,13 +522,12 @@ apply_tuning() {
     done
     while true; do
         echo -e "\n${CYAN}【爬升曲线指南】${NC}"
-        echo -e " ${GREEN}0.1 - 0.4${NC}: 保守稳定 (适合 512M 等极小内存机器)"
-        echo -e " ${GREEN}0.5 - 0.6${NC}: 平稳传输 (适合日常建站，不抢占资源)"
-        echo -e " ${YELLOW}0.7 - 0.9${NC}: 快速响应 (推荐，自动关闭慢启动，看剧极速)"
-        echo -e " ${RED}1.0      ${NC}: 极限跑分 (双倍 BDP 冗余，强力压榨带宽)"
-        read -r -p "▶ 请输入爬升曲线调节 (0.1 - 1.0) [默认 0.79]: " ramp_up
+        echo -e " ${GREEN}0.1 - 0.4${NC}: 保守稳定 (适合极小内存或普通建站)"
+        echo -e " ${YELLOW}0.5 - 0.7${NC}: 平稳提速 (适合日常看剧，推荐 0.5)"
+        echo -e " ${RED}0.8 - 1.0${NC}: 极限解除 (激进抢占带宽，内存占用较高)"
+        read -r -p "▶ 请输入爬升曲线调节 (0.1 - 1.0) [默认 0.5]: " ramp_up
         ramp_up="${ramp_up// /}"
-        [ -z "$ramp_up" ] && ramp_up="0.79"
+        [ -z "$ramp_up" ] && ramp_up="0.5"
         if awk -v r="$ramp_up" 'BEGIN{if(r>=0.1 && r<=1.0) exit 0; else exit 1}'; then
             break
         fi
@@ -548,80 +545,62 @@ apply_tuning() {
     NEED_BACKUP="${NEED_BACKUP// /}"
     [[ -z "$NEED_BACKUP" || "$NEED_BACKUP" =~ ^[yY]$ ]] && backup_config_silently
 
-    echo -e "\n${CYAN}>>> 正在运行纯原生自研引擎生成配置 (0 依赖)...${NC}"
+    echo -e "\n${CYAN}>>> 正在运行纯原生 V9 引擎生成配置 (0 依赖 AWK 引擎)...${NC}"
     
-    awk -v e="$local_bw" -v n="$server_bw" -v r="$latency" -v _ram="$w_ram" -v f="$ramp_up" '
+    awk -v e="$local_bw" -v t="$server_bw" -v i="$latency" -v a="$w_ram" -v r="$ramp_up" -v qdisc="fq" -v bbr_ver="bbr" '
+    function clamp(v, lo, hi) { return (v < lo) ? lo : ((v > hi) ? hi : v) }
     function floor(x) { return int(x) }
-    function ceil(x) { y = int(x); return (x > y) ? y + 1 : y }
-    function min(x, y) { return (x < y) ? x : y }
+    function ceil(x) { return (x == int(x)) ? x : int(x) + 1 }
     function max(x, y) { return (x > y) ? x : y }
-    function clamp(val, min_val, max_val) { return max(min_val, min(val, max_val)) }
-    function log_curve(val) { base=exp(1); return log(val * (base - 1) + 1) / log(base) }
+    function min(x, y) { return (x < y) ? x : y }
     
     BEGIN {
-        F = clamp(r / 40, 1, 5)
-        T = clamp(2 * sqrt(e / n) * F, 1.5, 5)
-        base_bytes = floor(1024 * min(e * T, 2 * n) * 1024 / 8)
-        
-        curve_factor = log_curve(clamp(f, 0, 1))
-        B = e / n
-        if (B > 100) N = 0.06
-        else if (B > 50) N = 0.12
-        else if (B > 20) N = 0.2
-        else if (B > 10) N = 0.3
-        else if (B > 5) N = 0.5
-        else if (B > 2) N = 0.7
-        else N = 1.0
-
-        G = ceil(base_bytes * r / 1000)
-        O_lim = (_ram <= 512) ? 131072 : ((_ram <= 1024) ? 262144 : 524288)
-        O = max(G, O_lim)
-        
-        L_div = (_ram <= 512) ? 1200 : ((_ram <= 1024) ? 1000 : 800)
-        L = max(O, base_bytes * r / L_div)
-        
-        V = ceil(base_bytes * r / 1000)
-        max_mem_bytes = _ram * 1024 * 1024 * 0.125
-        H = min(ceil(2 * curve_factor * N * V), max_mem_bytes)
-        
-        if (r > 500) W = max(H, ceil(0.5 * V))
-        else W = H
-        
-        K_mult = (_ram <= 512) ? 1.5 : ((_ram <= 1024) ? 1.8 : 2.0)
-        K_min = (_ram <= 512) ? 3 : ((_ram <= 1024) ? 4 : 5)
-        K_max = (_ram <= 512) ? 6 : ((_ram <= 1024) ? 8 : 10)
-        K = clamp(K_mult * F, K_min, K_max)
-        Q = K
-        
-        X0 = 32768; X1 = 262144; X2 = min(floor(L * Q), W)
-        Y0 = 32768; Y1 = 262144; Y2 = min(floor(L * K), W)
-        
-        J = ceil(min(3 * max(50, base_bytes / 131072), 20000))
-        Z = (_ram <= 512) ? 0.8 : ((_ram <= 1024) ? 1.0 : ((_ram <= 2048) ? 1.3 : 1.5))
-        
-        ee_max = (_ram <= 512) ? 8192 : 16384
-        ee = clamp(floor(0.15 * J * Z), 2560, ee_max)
-        
-        et_max = (_ram <= 512) ? 16384 : 32768
-        et = clamp(floor(0.30 * J * Z), 8192, et_max)
-        
-        en_max = (_ram <= 512) ? 32768 : 65536
-        en = clamp(floor(0.60 * J * Z), 8192, en_max)
-        
-        mfk_ratio = (_ram <= 512) ? 0.02 : ((_ram <= 1024) ? 0.025 : ((_ram <= 2048) ? 0.03 : 0.035))
-        mfk_val = clamp(floor(1024 * _ram * mfk_ratio) + floor(0.6 * ceil(base_bytes / 1024)), 65536, 1048576)
-        
-        optmem_max = floor(min(262144, L / 2))
-        notsent_lowat = floor(min(L / 2, 524288))
-        adv_win_scale = max(2, ceil(F * 1.0))
-        max_orphans = (_ram <= 256) ? 16384 : 32768
-        
-        gc_thresh3 = (_ram <= 512) ? 2048 : 4096
-        gc_thresh2 = (_ram <= 512) ? 1024 : 2048
-        gc_thresh1 = (_ram <= 512) ? 256 : 512
+        if (i > 120) {
+            # 高延迟长肥管道模式
+            F = i / 40
+            oo = clamp(2 * sqrt(e/t) * F, 1.5, 5)
+            T = floor(1024 * min(e*oo, 2*t) * 1024 / 8)
+            W_raw = ceil(T * r * i * 2 / 1000)
+            U = int(a * 1024 * 1024 * 0.15)
+            W = min(W_raw, U)
+            CORE_MAX = W; TCP_RMEM_MAX = W; TCP_WMEM_MAX = W
+            
+            adv = max(2, ceil(F * 8))
+            ee = max(2560, floor((e/1000)*700 + (a/1024)*800 + i*1.42))
+            et = max(8192, ee * 2 + 1)
+            en = max(8192, ee * 4 + 2)
+            
+            bm = floor(1024 * a * 0.025)
+            mfk = clamp(floor(bm + (T/1024) * 0.63276), 65536, 2097152)
+            
+            rmin = 32768; wmin = 32768; rdef = 262144; wdef = 262144
+            notsent = 524288; fack = 1; sw = 5; dr = 5; db = 2; optm = 262144; morph = 32768
+            nometrics = 1; synr = 2; mod_rcvbuf = 1
+            gc3 = 4096; gc2 = 2048; gc1 = 512
+        } else {
+            # 低延迟常规模式
+            CORE_MAX = 8388608
+            TCP_RMEM_MAX = min(8388608, floor(e * 41097.22))
+            TCP_WMEM_MAX = min(8388608, floor(e * 20548.61))
+            
+            ee = clamp(floor((e/1000) * (a * 0.202 + i * 1.98)), 256, 4096)
+            et = 2000; en = clamp(ee * 4, 2048, 16384)
+            adv = clamp(ceil(i / 40 + r * 3), 2, 15)
+            
+            mem_tier = (a<=256) ? 0.015 : ((a<=512) ? 0.02 : ((a<=1024) ? 0.025 : 0.03))
+            bm = floor(1024 * a * mem_tier)
+            oo = clamp(1.5*sqrt(e/t), 1, 2)
+            T = floor(1024 * min(e*oo, t) * 1024 / 8)
+            mfk = clamp(bm + floor(0.5 * ceil(T/1024)), 32768, 1048576)
+            
+            notsent=4096; fack=0; sw=10; dr=10; db=5; optm=65536; morph=65536
+            rmin=8192; wmin=8192; rdef=87380; wdef=65536
+            nometrics=0; synr=3; mod_rcvbuf=1
+            gc3 = 8192; gc2 = 4096; gc1 = 1024
+        }
 
         print "# =========================================="
-        print "# VPSBox 网络调优核心逻辑 (VPSBox 自研引擎原生生成)"
+        print "# VPSBox 网络调优 - V9 终极版 (AWK 引擎)"
         print "# =========================================="
         print "kernel.pid_max = 65535"
         print "kernel.panic = 1"
@@ -630,23 +609,23 @@ apply_tuning() {
         print "kernel.printk = 3 4 1 3"
         print "kernel.numa_balancing = 0"
         print "kernel.sched_autogroup_enabled = 0"
-        print "vm.swappiness = 5"
-        print "vm.dirty_ratio = 5"
-        print "vm.dirty_background_ratio = 2"
+        
+        printf "vm.swappiness = %d\n", sw
+        printf "vm.dirty_ratio = %d\n", dr
+        printf "vm.dirty_background_ratio = %d\n", db
         print "vm.panic_on_oom = 1"
         print "vm.overcommit_memory = 1"
-        printf "vm.min_free_kbytes = %d\n", mfk_val
-        print "vm.vfs_cache_pressure = 100"
-        print "vm.dirty_expire_centisecs = 3000"
-        print "vm.dirty_writeback_centisecs = 500"
-        print "net.core.default_qdisc = fq"
+        printf "vm.min_free_kbytes = %d\n", mfk
+        
+        printf "net.core.default_qdisc = %s\n", qdisc
         printf "net.core.netdev_max_backlog = %d\n", et
-        printf "net.core.rmem_max = %d\n", W
-        printf "net.core.wmem_max = %d\n", W
-        printf "net.core.rmem_default = %d\n", X1
-        printf "net.core.wmem_default = %d\n", Y1
+        printf "net.core.rmem_max = %d\n", CORE_MAX
+        printf "net.core.wmem_max = %d\n", CORE_MAX
+        printf "net.core.rmem_default = %d\n", rdef
+        printf "net.core.wmem_default = %d\n", wdef
         printf "net.core.somaxconn = %d\n", ee
-        printf "net.core.optmem_max = %d\n", optmem_max
+        printf "net.core.optmem_max = %d\n", optm
+        
         print "net.ipv4.tcp_fastopen = 3"
         print "net.ipv4.tcp_timestamps = 1"
         print "net.ipv4.tcp_tw_reuse = 1"
@@ -654,34 +633,43 @@ apply_tuning() {
         print "net.ipv4.tcp_slow_start_after_idle = 0"
         print "net.ipv4.tcp_max_tw_buckets = 32768"
         print "net.ipv4.tcp_sack = 1"
-        print "net.ipv4.tcp_fack = 1"
-        printf "net.ipv4.tcp_rmem = %d %d %d\n", X0, X1, X2
-        printf "net.ipv4.tcp_wmem = %d %d %d\n", Y0, Y1, Y2
+        printf "net.ipv4.tcp_fack = %d\n", fack
+        
+        printf "net.ipv4.tcp_rmem = %d %d %d\n", rmin, rdef, TCP_RMEM_MAX
+        printf "net.ipv4.tcp_wmem = %d %d %d\n", wmin, wdef, TCP_WMEM_MAX
         print "net.ipv4.tcp_mtu_probing = 1"
-        print "net.ipv4.tcp_congestion_control = bbr"
-        printf "net.ipv4.tcp_notsent_lowat = %d\n", notsent_lowat
+        printf "net.ipv4.tcp_congestion_control = %s\n", bbr_ver
+        printf "net.ipv4.tcp_notsent_lowat = %d\n", notsent
         print "net.ipv4.tcp_window_scaling = 1"
-        printf "net.ipv4.tcp_adv_win_scale = %d\n", adv_win_scale
-        print "net.ipv4.tcp_moderate_rcvbuf = 1"
-        print "net.ipv4.tcp_no_metrics_save = 1"
+        printf "net.ipv4.tcp_adv_win_scale = %d\n", adv
+        printf "net.ipv4.tcp_moderate_rcvbuf = %d\n", mod_rcvbuf
+        printf "net.ipv4.tcp_no_metrics_save = %d\n", nometrics
+        
         printf "net.ipv4.tcp_max_syn_backlog = %d\n", en
-        printf "net.ipv4.tcp_max_orphans = %d\n", max_orphans
+        printf "net.ipv4.tcp_max_orphans = %d\n", morph
         print "net.ipv4.tcp_synack_retries = 2"
-        print "net.ipv4.tcp_syn_retries = 2"
+        printf "net.ipv4.tcp_syn_retries = %d\n", synr
         print "net.ipv4.tcp_abort_on_overflow = 0"
         print "net.ipv4.tcp_stdurg = 0"
         print "net.ipv4.tcp_rfc1337 = 0"
         print "net.ipv4.tcp_syncookies = 1"
-        print "net.ipv4.ip_forward = 0"
+        
         print "net.ipv4.ip_local_port_range = 1024 65535"
         print "net.ipv4.ip_no_pmtu_disc = 0"
         print "net.ipv4.route.gc_timeout = 100"
         print "net.ipv4.neigh.default.gc_stale_time = 120"
-        printf "net.ipv4.neigh.default.gc_thresh3 = %d\n", gc_thresh3
-        printf "net.ipv4.neigh.default.gc_thresh2 = %d\n", gc_thresh2
-        printf "net.ipv4.neigh.default.gc_thresh1 = %d\n", gc_thresh1
-        print "net.ipv4.conf.all.accept_redirects = 0"
-        print "net.ipv4.conf.default.accept_redirects = 0"
+        printf "net.ipv4.neigh.default.gc_thresh3 = %d\n", gc3
+        printf "net.ipv4.neigh.default.gc_thresh2 = %d\n", gc2
+        printf "net.ipv4.neigh.default.gc_thresh1 = %d\n", gc1
+        
+        print "net.ipv4.icmp_echo_ignore_broadcasts = 1"
+        print "net.ipv4.icmp_ignore_bogus_error_responses = 1"
+        print "net.ipv4.conf.all.rp_filter = 1"
+        print "net.ipv4.conf.default.rp_filter = 1"
+        print "net.ipv4.conf.all.arp_announce = 2"
+        print "net.ipv4.conf.default.arp_announce = 2"
+        print "net.ipv4.conf.all.arp_ignore = 1"
+        print "net.ipv4.conf.default.arp_ignore = 1"
     }' > "$CUSTOM_CONF"
 
     if [ $? -ne 0 ] || [ ! -s "$CUSTOM_CONF" ]; then
@@ -1143,7 +1131,6 @@ install_ws_tls_node() {
         if [[ "$cert_mode" != "1" && "$cert_mode" != "2" ]]; then continue; fi
         
         if [ "$cert_mode" == "1" ]; then
-            # 修复：新增 API Token 获取步骤的引导提示
             echo -e "${YELLOW}提示: API Token 可在 Cloudflare 右上角个人资料 -> API 令牌 -> 创建令牌 (选择模板: 编辑区域 DNS) 获取。${NC}"
             read -r -p "▶ 请输入您的 Cloudflare API Token: " CF_Token
             if [ -z "$CF_Token" ]; then continue; fi
@@ -1303,7 +1290,6 @@ install_hy2_node() {
         if [[ "$cert_mode" != "1" && "$cert_mode" != "2" ]]; then continue; fi
         
         if [ "$cert_mode" == "1" ]; then
-            # 修复：新增 API Token 获取步骤的引导提示
             echo -e "${YELLOW}提示: API Token 可在 Cloudflare 右上角个人资料 -> API 令牌 -> 创建令牌 (选择模板: 编辑区域 DNS) 获取。${NC}"
             read -r -p "▶ 请输入您的 Cloudflare API Token: " CF_Token
             if [ -z "$CF_Token" ]; then continue; fi
