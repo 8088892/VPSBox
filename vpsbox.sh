@@ -455,50 +455,120 @@ apply_tuning() {
     > "$CUSTOM_CONF"
 
     # 使用内置 AWK 计算高精度变量，并按 k=v 格式输出，杜绝 Python 依赖
-    TUNING_VARS=$(awk -v e="$local_bw" -v t="$server_bw" -v i="$latency" -v a="$w_ram" -v r="$ramp_up" -v bbr="$bbr_ver" -v qd="$qdisc" '
-    function min(x,y){return x<y?x:y} function max(x,y){return x>y?x:y} function clamp(v,lo,hi){return max(lo,min(hi,v))}
-    function math_ceil(x){return (x==int(x))?x:int(x)+1} function log_curve(x,b,s){return s*log(x*(b-1)+1)/log(b)}
-    function queue_theory(e,t,n){return t/(1-min(n,0.95))*e}
+    TUNING_VARS=$(awk -v lb="$local_bw" -v sb="$server_bw" -v lat="$latency" \
+        -v mem="$w_ram" -v ramp="$ramp_up" -v bbr="$bbr_ver" -v qd="$qdisc" '
+    function min(x,y){return x<y?x:y}
+    function max(x,y){return x>y?x:y}
+    function clamp(v,lo,hi){return v<lo?lo:v>hi?hi:v}
+    function ceil(x){y=int(x);return y<x?y+1:y}
+    function sigmoid(e,t,n){return 1/(1+exp(-t*(e-n)))}
+    function tcpcong(e,n){return min(n*(1+.5*e),n+10*e)}
+    function qtheory(e,t,n){return t/(1-min(n,.95))*e}
+    function memawe(e,t,n){return min(e,1024*t*1024*n)}
     BEGIN {
-        E_CONST=exp(1);
-        if(i>120) {
-            BRANCH="high"; F=clamp(i/40,1,5); oo=clamp(2*sqrt(e/t)*F,1.5,5);
-            T=int(1024*min(e*oo,2*t)*1024/8); raw_P=T*r/1000; U=int(a*1024*1024/8); W=min(int(raw_P*i*2),U);
-            ms=(a<=512)?6:((a<=1024)?8:((a<=2048)?12:16)); adv=max(2,math_ceil(F*ms)); tp=2; sf=1.5; ba=2;
-            qd_param=2.5; cs=2; lt=2; lct=1.5;
-            if(a<=512){tp=1.8;sf=1.8;ba=1.5;qd_param=2;cs=1.5;lt=1.5;} else if(a<=1024){} else if(a<=2048){tp=2.2;ba=2.3;qd_param=3;cs=2.5;lt=2;} else{tp=2.5;ba=2.5;qd_param=3.5;cs=3;lt=2;}
-            cf1=clamp(log_curve(r,E_CONST,tp/2)*sf*(ba/2),0.5,3);
-            lat_n=min(1,(i-120)/1880); lf=clamp(log_curve(lat_n,lct,1)*lt*cf1,1,8);
-            n_util=min(0.9,0.85*cf1); qt=queue_theory(T/131072*cs,i/1000*3,n_util); qf=clamp(lf/3*(log(qt+1)/log(10000)*qd_param),0.8,4);
-            inner=min(3*max(50,T/131072),20000); J=math_ceil(inner*qf); Zm=(a<=512)?0.8:((a<=1024)?1.0:((a<=2048)?1.3:1.5));
-            ee=clamp(int(0.15*J*Zm),2560,(a<=512)?8192:16384); et=clamp(int(0.30*J*Zm),8192,(a<=512)?16384:32768); en=clamp(int(0.60*J*Zm),8192,(a<=512)?32768:65536);
-            bm=int(1024*a*((a<=512)?0.02:((a<=1024)?0.025:((a<=2048)?0.03:0.035)))); mfk=clamp(bm+int(0.6*math_ceil(T/1024)),65536,1048576);
-            notsent=int(min(W/2,524288)); fack=1; sw=5; dr=5; db=2; optm=262144; morph=(a<=256)?16384:32768;
-            rmin=32768; wmin=32768; rdef=262144; wdef=262144;
-            nometrics=1; synr=2; mod_rcvbuf=1; gc3=4096; gc2=2048; gc1=512;
-        } else {
-            BRANCH="low"; oo=clamp(1.5*sqrt(e/t),1,2); T=int(1024*min(e*oo,t)*1024/8); U=int(a*1024*1024*0.12); W=min(int(T*(-0.007516*r+0.124437)),U);
-            Q=math_ceil(min(2*max(100,T/65536),10000));
-            Z=0.5414*r+0.6836; ee=clamp(int(0.20*Q*Z),256,2048); et=clamp(int(0.40*Q*Z),2000,4000);
-            en=clamp(int(0.80*Q*Z),2048,16384); adv=max(2,math_ceil(Z*2.5)); bm=int(1024*a*((a<=256)?0.015:((a<=512)?0.02:((a<=1024)?0.025:0.03))));
-            mfk=clamp(bm+int(0.5*math_ceil(T/1024)),32768,1048576); notsent=4096; fack=0; sw=10; dr=10; db=5; optm=int(min(65536,max(math_ceil(T*r/1000),24576)/4)); morph=65536;
-            rmin=8192; wmin=8192; rdef=87380; wdef=65536; nometrics=0; synr=3;
-            mod_rcvbuf=1; gc3=8192; gc2=4096; gc1=1024;
-        }
-        
-        # 核心系统项
-        printf("kernel.pid_max=65535\nkernel.panic=1\nkernel.sysrq=1\nkernel.core_pattern=core_%%e\nkernel.printk=3 4 1 3\nkernel.numa_balancing=0\nkernel.sched_autogroup_enabled=0\n");
-        printf("vm.swappiness=%d\nvm.dirty_ratio=%d\nvm.dirty_background_ratio=%d\nvm.panic_on_oom=1\nvm.overcommit_memory=1\nvm.min_free_kbytes=%d\nvm.vfs_cache_pressure=100\nvm.dirty_expire_centisecs=3000\nvm.dirty_writeback_centisecs=500\n", sw, dr, db, mfk);
-        
-        # 缓冲与队列
-        printf("net.core.default_qdisc=%s\nnet.core.netdev_max_backlog=%d\nnet.core.rmem_max=%d\nnet.core.wmem_max=%d\nnet.core.rmem_default=%d\nnet.core.wmem_default=%d\nnet.core.somaxconn=%d\nnet.core.optmem_max=%d\n", qd, et, W, W, rdef, wdef, ee, optm);
-        # TCP 基本项
-        printf("net.ipv4.tcp_fastopen=3\nnet.ipv4.tcp_timestamps=1\nnet.ipv4.tcp_tw_reuse=1\nnet.ipv4.tcp_fin_timeout=10\nnet.ipv4.tcp_slow_start_after_idle=0\nnet.ipv4.tcp_max_tw_buckets=32768\nnet.ipv4.tcp_sack=1\nnet.ipv4.tcp_fack=%d\n", fack);
-        printf("net.ipv4.tcp_rmem=%d %d %d\nnet.ipv4.tcp_wmem=%d %d %d\nnet.ipv4.tcp_mtu_probing=1\nnet.ipv4.tcp_congestion_control=%s\nnet.ipv4.tcp_notsent_lowat=%d\nnet.ipv4.tcp_window_scaling=1\nnet.ipv4.tcp_adv_win_scale=%d\nnet.ipv4.tcp_moderate_rcvbuf=%d\nnet.ipv4.tcp_no_metrics_save=%d\n", rmin, rdef, W, wmin, wdef, W, bbr, notsent, adv, mod_rcvbuf, nometrics);
-        printf("net.ipv4.tcp_max_syn_backlog=%d\nnet.ipv4.tcp_max_orphans=%d\nnet.ipv4.tcp_synack_retries=2\nnet.ipv4.tcp_syn_retries=%d\nnet.ipv4.tcp_abort_on_overflow=0\nnet.ipv4.tcp_stdurg=0\nnet.ipv4.tcp_rfc1337=0\nnet.ipv4.tcp_syncookies=1\n", en, morph, synr);
-        # 网络基础加固与防溢出
-        printf("net.ipv4.ip_forward=0\nnet.ipv4.ip_local_port_range=1024 65535\nnet.ipv4.ip_no_pmtu_disc=0\nnet.ipv4.route.gc_timeout=100\nnet.ipv4.neigh.default.gc_stale_time=120\nnet.ipv4.neigh.default.gc_thresh3=%d\nnet.ipv4.neigh.default.gc_thresh2=%d\nnet.ipv4.neigh.default.gc_thresh1=%d\n", gc3, gc2, gc1);
-        printf("net.ipv4.icmp_echo_ignore_broadcasts=1\nnet.ipv4.icmp_ignore_bogus_error_responses=1\nnet.ipv4.conf.all.rp_filter=1\nnet.ipv4.conf.default.rp_filter=1\nnet.ipv4.conf.all.arp_announce=2\nnet.ipv4.conf.default.arp_announce=2\nnet.ipv4.conf.all.arp_ignore=1\nnet.ipv4.conf.default.arp_ignore=1\nnet.ipv4.conf.all.accept_redirects=0\nnet.ipv4.conf.default.accept_redirects=0\nnet.ipv4.conf.all.secure_redirects=0\nnet.ipv4.conf.default.secure_redirects=0\nnet.ipv4.conf.all.accept_source_route=0\nnet.ipv4.conf.default.accept_source_route=0\nnet.ipv4.conf.all.forwarding=0\nnet.ipv4.conf.default.forwarding=0\n");
+      lb=clamp(lb,1,100000);sb=clamp(sb,1,100000)
+      lat=clamp(lat,1,2000);mem=clamp(mem,64,32768)
+      ramp=clamp(ramp,.1,1)
+
+      if(lat<=120){
+        f=max(1,min(2,1.5*sqrt(lb/sb)))
+        T=1024*min(lb*f,sb)*1024/8
+        n_bdp=ceil(T*lat/1000);p_bdp=max(n_bdp,24576)
+        ar=mem<=256?.1:.125;ib=mem<=256?4194304:8388608
+        u=max(memawe(ceil(1.5*ramp*n_bdp),mem,ar),ib)
+        resp=mem<=256?2.5:mem<=512?2.2:mem<=1024?2:1.8
+        bfm=mem<=256?.24:mem<=512?.378:mem<=1024?.56:1.08
+        cf=sigmoid(ramp,4,.3)*resp/2;cf=clamp(cf,.3,2)
+        lfe=exp((lat/120-1)*log(2));lf=clamp(lfe*cf*resp,.8,5)
+        ef=max(lat,50);lbe=exp((ef/120-1)*log(2));lbf=clamp(lbe*cf*resp,.8,5)
+        bf=clamp(lbf*tcpcong(cf,1)*(cf<.877?bfm*(1+1.8*(1-cf/.877)):bfm),.5,3)
+        ci=qtheory(T/65536*1.2,lat/1000*2,.8*cf)
+        qf=clamp(log(ci+1)/log(1000)*.8*1.3,.3,2)
+        bb=ceil(T*lat/1000);ws=bb>0?ceil(log(2*bb/65535)/log(2)):0
+        aw=clamp(lf/1.5*ws*1.2*cf,1,4);aws=max(2,ceil(aw))
+        V=mem<=256?2.5:mem<=512?3:mem<=1024?3:4
+        H=mem<=256?1.2:mem<=512?1.5:mem<=1024?1.5:2
+        w2=min(int(p_bdp*V*bf),u);k2=min(int(p_bdp*H*bf),u)
+        qq=ceil(max(100,min(10000,2*T/65536))*qf)
+        xm=mem<=256?.6:mem<=512?.8:mem<=1024?1:1.2
+        so=int(clamp(.2*qq*xm,256,2048))
+        nd=int(clamp(.4*qq*xm,2000,4000))
+        sy=int(clamp(.8*qq*xm,2048,16384))
+        r2=mem<=256?.015:mem<=512?.02:mem<=1024?.025:.03
+        mf=int(clamp(1024*mem*r2+.5*T/1024,32768,1048576))
+        op=int(min(65536,p_bdp/4))
+        rd=87380;wd=65536;sw=10;ft=10;ts=1;mt=1;ns=3
+        nl=4096;mr=1;fack=0;nms=0;mo=65536
+        nt3=8192;nt2=4096;nt1=1024
+        br=0;bp=0;ko=0;ki=0;kp=0;tm=""
+      } else {
+        f=max(1,min(5,lat/40))
+        tr=max(1.5,min(5,2*sqrt(lb/sb)*f))
+        T=1024*min(lb*tr,2*sb)*1024/8
+        vhl=ceil(T*lat/1000)
+        hv=memawe(ceil(2*ramp*vhl),mem,.125)
+        u=hv;if(lat>500)u=max(hv,ceil(.5*vhl))
+        lhl=max(vhl,T*lat/800)
+        km=clamp(1.8*f,4,8)*ramp
+        qm=clamp(2.5*f,5,10)*ramp
+        w2=min(int(lhl*qm),u);k2=min(int(lhl*km),u)
+        j=ceil(max(50,min(20000,3*T/131072))*ramp)
+        z=mem<=512?.8:mem<=1024?1:mem<=2048?1.3:1.5
+        so=int(clamp(.15*j*z,2560,16384))
+        nd=int(clamp(.3*j*z,8192,32768))
+        sy=int(clamp(.6*j*z,8192,65536))
+        r2=mem<=512?.02:mem<=1024?.025:mem<=2048?.03:.035
+        mf=int(clamp(1024*mem*r2+.6*T/1024,65536,1048576))
+        op=int(min(262144,lhl/2));aws=max(2,ceil(f*8))
+        mo=mem<=256?16384:32768;ns=2
+        nt3=mem<=512?2048:4096;nt2=mem<=512?1024:2048;nt1=mem<=512?256:512
+        rd=262144;wd=262144;sw=5;ft=10;ts=1;mt=1;mr=1
+        nl=int(min(lhl/2,524288));fack=1;nms=1
+        br=0;bp=0;ko=0;ki=0;kp=0;tm=""
+      }
+      printf("kernel.pid_max=65535\nkernel.panic=1\nkernel.sysrq=1\nkernel.core_pattern=core_%%e\n")
+      printf("kernel.printk=3 4 1 3\nkernel.numa_balancing=0\nkernel.sched_autogroup_enabled=0\n")
+      printf("vm.swappiness=%d\nvm.dirty_ratio=10\nvm.dirty_background_ratio=5\n",sw)
+      printf("vm.panic_on_oom=1\nvm.overcommit_memory=1\nvm.min_free_kbytes=%d\n",mf)
+      printf("vm.vfs_cache_pressure=100\nvm.dirty_expire_centisecs=3000\nvm.dirty_writeback_centisecs=500\n")
+      printf("net.core.default_qdisc=%s\nnet.core.netdev_max_backlog=%d\n",qd,nd)
+      printf("net.core.rmem_max=%d\nnet.core.wmem_max=%d\n",int(u),int(u))
+      printf("net.core.rmem_default=%d\nnet.core.wmem_default=%d\n",rd,wd)
+      printf("net.core.somaxconn=%d\nnet.core.optmem_max=%d\n",so,op)
+      if(br+0>0)printf("net.core.busy_read=%d\n",br)
+      if(bp+0>0)printf("net.core.busy_poll=%d\n",bp)
+      printf("net.ipv4.tcp_fastopen=3\nnet.ipv4.tcp_timestamps=%d\nnet.ipv4.tcp_tw_reuse=1\n",ts)
+      printf("net.ipv4.tcp_fin_timeout=%d\nnet.ipv4.tcp_slow_start_after_idle=0\n",ft)
+      printf("net.ipv4.tcp_max_tw_buckets=32768\nnet.ipv4.tcp_sack=1\nnet.ipv4.tcp_fack=%d\n",fack)
+      printf("net.ipv4.tcp_rmem=%d %d %d\n",8192,rd,int(w2))
+      printf("net.ipv4.tcp_wmem=%d %d %d\n",8192,wd,int(k2))
+      printf("net.ipv4.tcp_mtu_probing=%d\nnet.ipv4.tcp_congestion_control=%s\n",mt,bbr)
+      printf("net.ipv4.tcp_notsent_lowat=%d\nnet.ipv4.tcp_window_scaling=1\n",nl)
+      printf("net.ipv4.tcp_adv_win_scale=%d\nnet.ipv4.tcp_moderate_rcvbuf=%d\n",aws,mr)
+      printf("net.ipv4.tcp_no_metrics_save=%d\nnet.ipv4.tcp_max_syn_backlog=%d\n",nms,sy)
+      printf("net.ipv4.tcp_max_orphans=%d\n",mo)
+      printf("net.ipv4.tcp_synack_retries=2\nnet.ipv4.tcp_syn_retries=%d\n",ns)
+      printf("net.ipv4.tcp_abort_on_overflow=0\nnet.ipv4.tcp_stdurg=0\n")
+      printf("net.ipv4.tcp_rfc1337=0\nnet.ipv4.tcp_syncookies=1\n")
+      if(ko+0>0)printf("net.ipv4.tcp_keepalive_time=%d\n",ko)
+      if(ki+0>0)printf("net.ipv4.tcp_keepalive_intvl=%d\n",ki)
+      if(kp+0>0)printf("net.ipv4.tcp_keepalive_probes=%d\n",kp)
+      if(length(tm)>0)printf("net.ipv4.tcp_mem=%s\n",tm)
+      printf("net.ipv4.ip_forward=0\nnet.ipv4.ip_local_port_range=1024 65535\n")
+      printf("net.ipv4.ip_no_pmtu_disc=0\nnet.ipv4.route.gc_timeout=100\n")
+      printf("net.ipv4.neigh.default.gc_stale_time=120\n")
+      printf("net.ipv4.neigh.default.gc_thresh3=%d\n",nt3)
+      printf("net.ipv4.neigh.default.gc_thresh2=%d\n",nt2)
+      printf("net.ipv4.neigh.default.gc_thresh1=%d\n",nt1)
+      printf("net.ipv4.icmp_echo_ignore_broadcasts=1\n")
+      printf("net.ipv4.icmp_ignore_bogus_error_responses=1\n")
+      printf("net.ipv4.conf.all.rp_filter=1\nnet.ipv4.conf.default.rp_filter=1\n")
+      printf("net.ipv4.conf.all.arp_announce=2\nnet.ipv4.conf.default.arp_announce=2\n")
+      printf("net.ipv4.conf.all.arp_ignore=1\nnet.ipv4.conf.default.arp_ignore=1\n")
+      printf("net.ipv4.conf.all.accept_redirects=0\nnet.ipv4.conf.default.accept_redirects=0\n")
+      printf("net.ipv4.conf.all.secure_redirects=0\nnet.ipv4.conf.default.secure_redirects=0\n")
+      printf("net.ipv4.conf.all.accept_source_route=0\nnet.ipv4.conf.default.accept_source_route=0\n")
+      printf("net.ipv4.conf.all.forwarding=0\nnet.ipv4.conf.default.forwarding=0\n")
     }')
 
     # 预加载 BBR 模块防止未初始化报错
