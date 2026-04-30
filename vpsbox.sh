@@ -61,10 +61,6 @@ local w=$(get_term_width)
 echo -e "${CYAN}$(printf "%0.s=" $(seq 1 $w))${NC}"
 }
 
-print_separator() {
-local w=$(get_term_width)
-echo -e "${CYAN}$(printf "%0.s-" $(seq 1 $w))${NC}"
-}
 
 print_center() {
 local text="$1"
@@ -117,7 +113,6 @@ fi
 system_update() {
 clear; print_divider
 print_center "[ 更新系统与安装必备组件 ]" "$CYAN"
-print_divider
 if ! confirm_action "更新系统与安装组件"; then pause_for_enter; return; fi
 echo -e "\n${CYAN}>>> 正在更新软件源并升级系统组件 (这可能需要几分钟)...${NC}"
 export DEBIAN_FRONTEND=noninteractive
@@ -134,7 +129,6 @@ pause_for_enter
 system_clean() {
 clear; print_divider
 print_center "[ 系统垃圾与废弃依赖清理 ]" "$CYAN"
-print_divider
 if ! confirm_action "清理系统垃圾与冗余日志"; then pause_for_enter; return; fi
 echo -e "\n${CYAN}>>> 正在卸载无用的旧依赖包...${NC}"
 apt-get autoremove -y || { echo -e "\n${RED}[错误] 卸载旧依赖包失败！${NC}"; pause_for_enter; return; }
@@ -149,7 +143,6 @@ pause_for_enter
 change_root_password() {
 clear; print_divider
 print_center "[ 修改系统 root 密码 ]" "$CYAN"
-print_divider
 if ! confirm_action "修改 root 密码"; then pause_for_enter; return; fi
 echo -e "\n${YELLOW}提示：输入密码时屏幕不会显示字符，属于正常安全机制。${NC}\n"
 while true; do
@@ -171,9 +164,8 @@ manage_ssh_security() {
 while true; do
 clear; print_divider
 print_center "[ SSH 密钥与登录安全管理 ]" "$CYAN"
-print_divider
 echo -e "  ${GREEN}1.${NC} 添加/覆盖 SSH 公钥\n  ${GREEN}2.${NC} 删除所有 SSH 公钥\n  ${GREEN}3.${NC} 禁用密码登录 (强制使用密钥)\n  ${GREEN}4.${NC} 开启密码登录\n  ${GREEN}0.${NC} 返回主菜单"
-print_separator; echo ""
+echo ""
 read -r -p "> 请选择操作 [0-4]: " ssh_opt
 ssh_opt="${ssh_opt// /}"
 case $ssh_opt in
@@ -218,7 +210,6 @@ done
 change_ssh_port() {
 clear; print_divider
 print_center "[ 修改 SSH 默认登录端口 ]" "$CYAN"
-print_divider
 while true; do
 read -r -p "> 请输入新的 SSH 端口号 (建议 10000-65535，恢复默认请输 22，输入 0 取消): " new_port
 new_port="${new_port// /}"
@@ -238,7 +229,6 @@ pause_for_enter
 change_hostname() {
 clear; print_divider
 print_center "[ 修改系统主机名 (Hostname) ]" "$CYAN"
-print_divider
 echo -e "当前主机名: ${YELLOW}$(hostname)${NC}"
 while true; do
 read -r -p "> 请输入新的主机名 (仅限字母、数字和连字符, 输入 0 取消): " new_hostname
@@ -258,7 +248,6 @@ pause_for_enter
 set_china_timezone() {
 clear; print_divider
 print_center "[ 修改系统时区为北京时间 (Asia/Shanghai) ]" "$CYAN"
-print_divider
 if ! confirm_action "修改系统时区为中国北京时间"; then pause_for_enter; return; fi
 timedatectl set-timezone Asia/Shanghai || { echo -e "\n${RED}[错误] 设置时区失败，请检查系统 timedatectl 服务。${NC}"; pause_for_enter; return; }
 CURRENT_TZ="Asia/Shanghai"
@@ -269,7 +258,6 @@ pause_for_enter
 manage_swap() {
 clear; print_divider
 print_center "[ 虚拟内存 (Swap) 一键管理 ]" "$CYAN"
-print_divider
 local swap_size=$(free -m | grep -i swap | awk '{print $2}')
 echo -e "当前 Swap 大小: ${GREEN}${swap_size} MB${NC}\n"
 while true; do
@@ -305,7 +293,6 @@ done
 optimize_dns() {
 clear; print_divider
 print_center "[ 系统 DNS 极速优化 ]" "$CYAN"
-print_divider
 if ! confirm_action "将系统 DNS 替换为 1.1.1.1 和 8.8.8.8"; then pause_for_enter; return; fi
 echo -e "\n${CYAN}>>> 正在优化系统 DNS 配置并锁定文件...${NC}"
 chattr -i /etc/resolv.conf >/dev/null 2>&1
@@ -330,11 +317,10 @@ manage_bbr() {
 while true; do
 clear; print_divider
 print_center "BBR 拥塞控制智能管理中心" "$PURPLE"
-print_divider
 echo -e "  当前内核版本 : ${YELLOW}$(uname -r)${NC}\n  当前 BBR 状态: $(get_bbr_status)"
-print_separator
+
 echo -e "  ${GREEN}1.${NC} 开启 BBRv1 (极速秒开 / 适合所有系统)\n  ${GREEN}2.${NC} 安装 BBRv3 (合入谷歌最新 V3 分支 / 延迟更低更激进)\n  ${GREEN}3.${NC} 卸载 BBRv3 (安全回退至系统原生默认内核)"
-print_separator; echo -e "  ${GREEN}0.${NC} 返回主菜单"; print_divider; echo ""
+echo -e "  ${GREEN}0.${NC} 返回主菜单"; echo ""
 read -r -p "> 请输入编号 [0-3]: " bbr_opt
 bbr_opt="${bbr_opt// /}"
 case $bbr_opt in
@@ -396,7 +382,6 @@ done
 system_overview() {
 clear; print_divider
 print_center "[ 系统硬件与资源概览 ]" "$CYAN"
-print_divider
 local os_info cpu_model disk_usage root_used root_total root_pct
 os_info=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2)
 [ -z "$os_info" ] && os_info="$(uname -o) $(uname -r)"
@@ -412,7 +397,7 @@ echo -e "  ${CYAN}负载   :${NC} $(awk '{print $1", "$2", "$3}' /proc/loadavg)"
 echo -e "  ${CYAN}公网IP :${NC} ${SERVER_IP} [${IP_FORMAT}]"
 echo -e "  ${CYAN}时区   :${NC} ${CURRENT_TZ}"
 echo -e "  ${CYAN}BBR    :${NC} $(get_bbr_status)"
-print_separator
+
 echo -e "  ${YELLOW}网络接口流量:${NC}"
 local ifaces=$(ip -o link show 2>/dev/null | awk -F': ' '!/lo/{print $2}' | head -5)
 for iface in $ifaces; do
@@ -426,7 +411,6 @@ pause_for_enter
 docker_install() {
 clear; print_divider
 print_center "[ Docker 与 Docker Compose 一键安装 ]" "$CYAN"
-print_divider
 if command -v docker &>/dev/null; then
 echo -e "\n  ${GREEN}Docker 已安装:${NC} $(docker --version 2>/dev/null)"
 if command -v docker-compose &>/dev/null; then echo -e "  ${GREEN}Compose 已安装:${NC} $(docker-compose --version 2>/dev/null)"; fi
@@ -457,7 +441,6 @@ pause_for_enter
 fail2ban_install() {
 clear; print_divider
 print_center "[ Fail2Ban 暴力破解防护 ]" "$CYAN"
-print_divider
 if command -v fail2ban-client &>/dev/null; then
 echo -e "\n  ${GREEN}Fail2Ban 已安装${NC}"
 echo -e "  ${CYAN}SSH 监狱状态:${NC}"
@@ -506,7 +489,6 @@ pause_for_enter
 apply_tuning() {
 clear; print_divider
 print_center "[ VPS Box 自研动态 TCP 智能调优引擎 ]" "$CYAN"
-print_divider
 local local_bw server_bw latency ramp_up bbr_ver qdisc
 while true; do
 read -r -p "> 请输入本地/客户端下行带宽 (Mbps, 例如 500): " local_bw
@@ -712,7 +694,6 @@ manage_backup() {
 while true; do
 clear; print_divider
 print_center "[ 网络调优参数备份与还原管理 ]" "$CYAN"
-print_divider
 echo -e "  ${GREEN}1.${NC} 立即备份当前参数\n  ${GREEN}2.${NC} 还原历史备份\n  ${GREEN}3.${NC} 删除历史备份\n  ${GREEN}0.${NC} 返回主菜单"
 echo ""; read -r -p "> 请选择操作 [0-3]: " b_opt
 b_opt="${b_opt// /}"
@@ -770,7 +751,6 @@ done
 check_media_unlock() {
 clear; print_divider
 print_center "[ IP 质量检测与流媒体解锁 ]" "$CYAN"
-print_divider
 echo -e "${CYAN}>>> 正在载入权威检测引擎，请稍候...${NC}\n"
 bash <(curl -sL https://Check.Place) -I || echo -e "\n${RED}[错误] 脚本载入失败，请检查您的服务器网络与墙外连通性。${NC}"
 pause_for_enter
@@ -780,7 +760,6 @@ view_deployed_nodes() {
 while true; do
 clear; print_divider
 print_center "[ 节点状态、分享与配置备份管理 ]" "$CYAN"
-print_divider
 install_dependencies
 echo -e "${CYAN}--- 服务端底层配置状态 ---${NC}"
 if [ -f "/usr/local/etc/xray/config.json" ] && grep -q "inbounds" "/usr/local/etc/xray/config.json"; then
@@ -808,7 +787,7 @@ fi
 else
 echo -e "${YELLOW}暂无保存的分享链接记录。${NC}"
 fi
-print_separator
+
 echo -e "  [${GREEN}1-${#links[@]}${NC}] 输入编号：查看对应节点的二维码与完整链接"
 echo -e "  [${GREEN}B${NC}] 备份：为所有节点配置文件创建快照\n  [${GREEN}R${NC}] 还原：从历史快照恢复节点配置\n  [${GREEN}0${NC}] 返回主菜单"
 echo ""; read -r -p "> 请选择操作: " vn_opt
@@ -856,7 +835,6 @@ done
 delete_node() {
 clear; print_divider
 print_center "[ 删除指定的已部署节点 ]" "$CYAN"
-print_divider
 echo -e "正在扫描当前已部署的节点...\n"
 local nodes_found=0
 if [ -f "/usr/local/etc/xray/config.json" ] && grep -q "inbounds" "/usr/local/etc/xray/config.json"; then
@@ -936,7 +914,6 @@ if [ "$TEST_PASS" -eq 1 ]; then mv "$TMP_FILE" "$CONFIG_FILE"; return 0; else rm
 install_reality_node() {
 clear; print_divider
 print_center "[ 部署 VLESS-Reality 节点 ]" "$CYAN"
-print_divider
 echo -e "${YELLOW}>>> 小白科普：VLESS-Reality 是一种先进的伪装技术。不需要您购买域名，直接“借用”大厂（如苹果、微软）的域名进行伪装，安全性极高，非常适合防封锁。${NC}\n"
 
 while true; do
@@ -996,7 +973,6 @@ pause_for_enter
 install_ws_tls_node() {
 clear; print_divider
 print_center "[ 部署 VLESS-WS-TLS 节点 ]" "$CYAN"
-print_divider
 echo -e "${YELLOW}>>> 小白科普：WS+TLS 是非常经典的节点协议。最大的优势是可以搭配 Cloudflare 等 CDN 使用。如果您服务器的 IP 已经被墙，用这个协议配合 CDN 就能“起死回生”。${NC}\n"
 
 while true; do
@@ -1107,7 +1083,6 @@ pause_for_enter
 install_hy2_node() {
 clear; print_divider
 print_center "[ 部署 Hysteria2 节点 ]" "$CYAN"
-print_divider
 echo -e "${YELLOW}>>> 小白科普：Hysteria2 是一种基于 UDP 协议的暴力加速代理方案。如果您的服务器到国内的线路非常差（比如晚高峰卡顿），这个协议能无视拥塞强行拉满网速，体验飞跃！${NC}\n"
 
 while true; do
@@ -1218,7 +1193,6 @@ pause_for_enter
 install_warp() {
 clear; print_divider
 print_center "[ Cloudflare WARP 一键解锁 ]" "$CYAN"
-print_divider
 if ! confirm_action "部署 Cloudflare WARP"; then pause_for_enter; return; fi
 echo -e "\n${CYAN}>>> 正在启动 WARP 脚本...${NC}\n${YELLOW}   脚本下载与安装可能需要 1-2 分钟，请耐心等待${NC}"
 wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh && bash menu.sh || echo -e "\n${RED}[错误] WARP 脚本下载或执行失败，请检查网络。${NC}"
@@ -1229,13 +1203,12 @@ manage_ufw() {
 while true; do
 clear; print_divider
 print_center "[ UFW 防火墙端口管理 ]" "$CYAN"
-print_divider
 if ! command -v ufw &> /dev/null; then
 echo -e "${YELLOW}[系统] 正在自动安装 UFW 防火墙...${NC}"
 apt-get update -y > /dev/null 2>&1; apt-get install ufw -y > /dev/null 2>&1 || echo -e "${RED}[错误] UFW 安装失败。${NC}"
 fi
 echo -e "  ${GREEN}1.${NC} 查看当前防火墙状态与已放行端口\n  ${GREEN}2.${NC} 放行指定新端口 (TCP/UDP)\n  ${GREEN}3.${NC} 删除某个端口规则\n  ${GREEN}4.${NC} 开启防火墙\n  ${GREEN}5.${NC} 彻底关闭防火墙\n  ${GREEN}0.${NC} 返回主菜单"
-print_separator; echo ""
+echo ""
 read -r -p "> 请选择操作 [0-5]: " ufw_opt
 ufw_opt="${ufw_opt// /}"
 case $ufw_opt in
@@ -1275,16 +1248,15 @@ manage_script() {
 while true; do
 clear; print_divider
 print_center "[ VPSBox 脚本管理 ]" "$CYAN"
-print_divider
 local local_ver=$(grep -oP 'v[\d.]+' "$SHORTCUT_PATH" 2>/dev/null | head -1)
 [ -z "$local_ver" ] && local_ver="未知"
 local remote_ver=$(curl -sL --max-time 3 https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh 2>/dev/null | grep -oP 'v[\d.]+' | head -1)
 echo -e "  ${CYAN}本地版本:${NC} ${GREEN}${local_ver}${NC}"
 [ -n "$remote_ver" ] && echo -e "  ${CYAN}最新版本:${NC} ${GREEN}${remote_ver}${NC}" || echo -e "  ${YELLOW}无法获取远程版本${NC}"
-print_separator
+
 echo -e "  ${GREEN}1.${NC} 从 GitHub 更新到最新版本"
 echo -e "  ${RED}2.${NC} 彻底卸载 VPSBox 及所有残留"
-print_separator; echo -e "  ${GREEN}0.${NC} 返回主菜单"; print_divider; echo ""
+echo -e "  ${GREEN}0.${NC} 返回主菜单"; echo ""
 read -r -p "> 请选择: " ms_opt
 ms_opt="${ms_opt// /}"
 case $ms_opt in
@@ -1313,10 +1285,9 @@ done
 }
 
 while true; do
-clear; echo ""; print_divider
+clear; print_divider
 print_center "VPS Box 节点部署与服务器管家 v2.7.0" "$PURPLE"
-print_divider
-print_separator
+
 echo -e "  ${CYAN}【基础系统管理与安全防护】${NC}"
 echo -e "  ${GREEN} 1.${NC} 系统概览 (资源/流量)"
 echo -e "  ${GREEN} 2.${NC} 更新系统并安装必备组件"
@@ -1345,7 +1316,6 @@ echo -e "  ${GREEN}21.${NC} Fail2Ban 暴力破解防护"
 echo -e "  ${GREEN}22.${NC} Cloudflare WARP 一键解锁"
 echo -e "  ${GREEN}23.${NC} UFW 防火墙简单端口管理"
 echo -e "  ${GREEN}24.${NC} 脚本管理 (更新/卸载)"
-print_separator
 echo -e "  ${GREEN} 0.${NC} 安全退出"
 print_divider
 echo -e "${YELLOW}当前版本: v2.7.0${NC}"
