@@ -839,12 +839,12 @@ echo -e "正在扫描当前已部署的节点...\n"
 local nodes_found=0
 if [ -f "/usr/local/etc/xray/config.json" ] && grep -q "inbounds" "/usr/local/etc/xray/config.json"; then
 echo -e "${CYAN}【Xray 节点】${NC}"
-jq -r '.inbounds[] | "  - 端口: \(.port) | 主协议: \(.protocol)"' /usr/local/etc/xray/config.json 2>/dev/null
+jq -r '.inbounds[] | "  - 端口: \(.port) | 协议: \(.protocol) | 网络: \(if .protocol == "hysteria" then "udp" else (.streamSettings.network // "tcp") end) | 安全: \(.streamSettings.security // "none")"' /usr/local/etc/xray/config.json 2>/dev/null
 nodes_found=1
 fi
 if [ -f "/etc/sing-box/config.json" ] && grep -q "inbounds" "/etc/sing-box/config.json"; then
 echo -e "\n${CYAN}【Sing-box 节点】${NC}"
-jq -r '.inbounds[] | "  - 端口: \(.listen_port) | 主协议: \(.type)"' /etc/sing-box/config.json 2>/dev/null
+jq -r '.inbounds[] | "  - 端口: \(.listen_port) | 协议: \(.type) | 网络: \(if .type == "hysteria2" then "udp" else (.transport.type // "tcp") end) | 安全: \(if (.tls?.reality?.enabled? // false) then "reality" elif (.tls?.enabled? // false) then "tls" else "none" end)"' /etc/sing-box/config.json 2>/dev/null
 nodes_found=1
 fi
 if [ "$nodes_found" -eq 0 ]; then echo -e "${YELLOW}未检测到任何已部署的节点，无需删除。${NC}"; pause_for_enter; return; fi
