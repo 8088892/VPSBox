@@ -33,10 +33,6 @@ fi
 if ! grep -q "$(hostname)" /etc/hosts; then
 echo "127.0.1.1 $(hostname)" >> /etc/hosts
 fi
-if [[ "$(realpath "$0")" != "$SHORTCUT_PATH" ]]; then
-curl -sL https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh -o "$SHORTCUT_PATH" 2>/dev/null
-chmod +x "$SHORTCUT_PATH"
-fi
 
 CPU_CORES=$(nproc)
 RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
@@ -94,7 +90,7 @@ return 0
 }
 
 install_dependencies() {
-local apps=("curl" "wget" "jq" "openssl" "socat" "fuser" "unzip" "qrencode")
+local apps=("curl" "wget" "jq" "openssl" "socat" "fuser" "unzip" "qrencode" "lsb_release")
 local missing_apps=()
 for app in "${apps[@]}"; do
 if ! command -v "$app" &> /dev/null; then missing_apps+=("$app"); fi
@@ -104,7 +100,7 @@ if [ ${#missing_apps[@]} -ne 0 ]; then
 echo -e "\n${CYAN}[系统] 检测到缺失必要底层组件，正在自动补全...${NC}"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y > "$INSTALL_LOG" 2>&1
-apt-get install -y curl wget sudo unzip tar openssl socat psmisc iputils-ping jq gnupg2 dnsutils bsdutils qrencode cron >> "$INSTALL_LOG" 2>&1
+apt-get install -y curl wget sudo unzip tar openssl socat psmisc iputils-ping jq gnupg2 dnsutils bsdutils qrencode cron lsb-release >> "$INSTALL_LOG" 2>&1
 systemctl enable --now cron >> "$INSTALL_LOG" 2>&1
 if [ $? -ne 0 ]; then echo -e "${RED}[警告] 某些组件安装可能存在异常，请查看 $INSTALL_LOG 排查原因。${NC}"; fi
 fi
@@ -119,7 +115,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y && apt-get -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" upgrade
 if [ $? -ne 0 ]; then echo -e "\n${RED}[错误] 升级系统组件失败，请检查网络或源状态。${NC}"; pause_for_enter; return; fi
 echo -e "\n${CYAN}>>> 正在安装必备工具包...${NC}"
-apt-get install -y curl wget sudo unzip tar openssl socat psmisc iputils-ping jq gnupg2 dnsutils bsdutils qrencode cron
+apt-get install -y curl wget sudo unzip tar openssl socat psmisc iputils-ping jq gnupg2 dnsutils bsdutils qrencode cron lsb-release
 systemctl enable --now cron >/dev/null 2>&1
 if [ $? -ne 0 ]; then echo -e "\n${RED}[错误] 必备工具包安装失败。${NC}"; pause_for_enter; return; fi
 echo -e "\n${GREEN}[成功] 系统更新与组件安装完毕！${NC}"
@@ -134,7 +130,7 @@ echo -e "\n${CYAN}>>> 正在卸载无用的旧依赖包...${NC}"
 apt-get autoremove -y || { echo -e "\n${RED}[错误] 卸载旧依赖包失败！${NC}"; pause_for_enter; return; }
 echo -e "\n${CYAN}>>> 正在清理系统下载缓存...${NC}"
 apt-get clean -y || echo -e "${RED}[错误] 缓存清理异常。${NC}"
-echo -e "\n${CYAN}>>> 正在清理超过 7 个月的系统日志...${NC}"
+echo -e "\n${CYAN}>>> 正在清理超过 7 天的系统日志...${NC}"
 journalctl --vacuum-time=7d >/dev/null 2>&1 || echo -e "${RED}[错误] 日志清理异常。${NC}"
 echo -e "\n${GREEN}[成功] 系统清理完毕，存储空间已释放！${NC}"
 pause_for_enter
@@ -273,10 +269,11 @@ if [[ "$input_size" =~ ^[0-9]+$ ]]; then break; else echo -e "${RED}[错误] 输
 done
 if ! confirm_action "设置 ${input_size}MB 的 Swap"; then return; fi
 echo -e "\n${CYAN}>>> 正在配置 ${input_size}MB Swap，请稍候...${NC}"
-swapoff -a; rm -f /swapfile
-dd if=/dev/zero of=/swapfile bs=1M count=$input_size status=progress || { echo -e "${RED}[错误] 磁盘空间不足或无权限！${NC}"; pause_for_enter; return; }
-chmod 600 /swapfile
-mkswap /swapfile || { echo -e "${RED}[错误] mkswap 初始化失败！${NC}"; pause_for_enter; return; }
+dd if=/dev/zero of=/swapfile.new bs=1M count=$input_size status=progress || { echo -e "${RED}[错误] 磁盘空间不足或无权限！${NC}"; rm -f /swapfile.new; pause_for_enter; return; }
+chmod 600 /swapfile.new
+mkswap /swapfile.new || { echo -e "${RED}[错误] mkswap 初始化失败！${NC}"; rm -f /swapfile.new; pause_for_enter; return; }
+swapoff -a 2>/dev/null
+mv /swapfile.new /swapfile
 swapon /swapfile || { echo -e "${RED}[错误] 挂载 Swap 失败！${NC}"; pause_for_enter; return; }
 if ! grep -q "/swapfile" /etc/fstab; then echo "/swapfile none swap sw 0 0" >> /etc/fstab; fi
 echo -e "${GREEN}[成功] Swap 设置成功！${NC}"; pause_for_enter; return ;;
@@ -340,6 +337,7 @@ sleep 2 ;;
 if ! command -v apt &> /dev/null; then echo -e "\n${RED}[错误] BBRv3 安装仅支持 Debian/Ubuntu。${NC}"; sleep 2; continue; fi
 if ! grep -qa "avx2" /proc/cpuinfo; then echo -e "\n${RED}[拦截] 您的 CPU 过于老旧 (不支持 x86-64-v3 指令集)！安装此内核将导致无法开机！${NC}"; sleep 3; continue; fi
 if ! confirm_action "安装 BBRv3 内核"; then continue; fi
+install_dependencies
 echo -e "\n${CYAN}>>> 正在连接 Ubuntu 官方服务器获取 XanMod 密钥 (防拦截模式)...${NC}"
 gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 86F7D09EE734E623 > /dev/null 2>&1
 gpg --export 86F7D09EE734E623 > /usr/share/keyrings/xanmod-archive-keyring.gpg
@@ -408,6 +406,27 @@ done
 pause_for_enter
 }
 
+# 智能映射 OS 版本代号到 Docker 官方支持的发行版
+# Docker 官方仓库不会即时跟进最新 OS 版本（如 Debian trixie / Ubuntu oracular）
+# 此函数将未知新版本映射到已知的最新支持版本（包完全兼容）
+resolve_docker_codename() {
+    local os_id="${ID:-debian}"
+    local os_codename="$(lsb_release -cs 2>/dev/null || echo '')"
+    if [ "$os_id" = "debian" ]; then
+        case "$os_codename" in
+            bullseye|bookworm) echo "$os_codename" ;;
+            *) echo "bookworm" ;;  # trixie, sid 等 → bookworm
+        esac
+    elif [ "$os_id" = "ubuntu" ]; then
+        case "$os_codename" in
+            focal|jammy|noble) echo "$os_codename" ;;
+            *) echo "noble" ;;  # oracular 等 → noble
+        esac
+    else
+        echo "bookworm"  # 兜底
+    fi
+}
+
 docker_install() {
 clear; print_divider
 print_center "[ Docker 与 Docker Compose 一键安装 ]" "$CYAN"
@@ -418,13 +437,16 @@ echo -e "\n${YELLOW}如需重装请先卸载: apt purge docker-ce docker-ce-cli 
 pause_for_enter; return
 fi
 if ! confirm_action "安装 Docker 与 Docker Compose"; then pause_for_enter; return; fi
+install_dependencies
 echo -e "\n${CYAN}>>> 正在安装 Docker...${NC}\n${YELLOW}   请耐心等待，约需 1-3 分钟${NC}"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y >/dev/null 2>&1
 apt-get install -y ca-certificates curl gnupg lsb-release >/dev/null 2>&1
 install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(lsb_release -cs 2>/dev/null || echo 'bookworm') stable" > /etc/apt/sources.list.d/docker.list
+local docker_distro="$ID"
+local docker_codename="$(resolve_docker_codename)"
+curl -fsSL https://download.docker.com/linux/${docker_distro}/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${docker_distro} ${docker_codename} stable" > /etc/apt/sources.list.d/docker.list
 apt-get update -y >/dev/null 2>&1
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null 2>&1
 if [ $? -eq 0 ]; then
@@ -454,6 +476,7 @@ case "${fb_opt// /}" in
 esac
 fi
 if ! confirm_action "安装并配置 Fail2Ban (SSH 暴力破解防护)"; then pause_for_enter; return; fi
+install_dependencies
 echo -e "\n${CYAN}>>> 正在安装 Fail2Ban...${NC}"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y >/dev/null 2>&1 && apt-get install -y fail2ban >/dev/null 2>&1
@@ -751,6 +774,7 @@ done
 check_media_unlock() {
 clear; print_divider
 print_center "[ IP 质量检测与流媒体解锁 ]" "$CYAN"
+install_dependencies
 echo -e "${CYAN}>>> 正在载入权威检测引擎，请稍候...${NC}\n"
 bash <(curl -sL https://Check.Place) -I || echo -e "\n${RED}[错误] 脚本载入失败，请检查您的服务器网络与墙外连通性。${NC}"
 pause_for_enter
@@ -944,15 +968,15 @@ LINK_IP="$SERVER_IP"
 if [[ "$IP_FORMAT" == "v6" ]]; then LINK_IP="[${SERVER_IP}]"; fi
 if [ "$core_choice" == "1" ]; then
 CORE_NAME="Xray"
-if ! command -v xray &> /dev/null; then echo -e "${YELLOW}   首次部署需下载 Xray 核心，请耐心等待...${NC}"; bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1; fi
-hash -r; X_BIN=$(command -v xray || echo "/usr/local/bin/xray"); KEYS=$("$X_BIN" x25519)
+if ! command -v xray &> /dev/null; then echo -e "${YELLOW}   首次部署需下载 Xray 核心，请耐心等待...${NC}"; bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1; hash -r; command -v xray &>/dev/null || { echo -e "\n${RED}[错误] Xray 核心下载失败，请检查网络连接。${NC}"; pause_for_enter; return; }; fi
+X_BIN=$(command -v xray || echo "/usr/local/bin/xray"); KEYS=$("$X_BIN" x25519)
 PRI=$(echo "$KEYS" | awk -F'[: ]+' '/Private/{print $NF}'); PUB=$(echo "$KEYS" | awk -F'[: ]+' '/Public/{print $NF}')
 NEW_INBOUND='{"port":'$PORT',"protocol":"vless","settings":{"clients":[{"id":"'$UUID'","flow":"xtls-rprx-vision"}],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"dest":"'$SNI_DOMAIN':443","serverNames":["'$SNI_DOMAIN'"],"privateKey":"'$PRI'","shortIds":["'$SHORT_ID'"]}}}'
 if append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$PORT" "Xray"; then systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray); else SERVICE_STATUS="config_error"; fi
 else
 CORE_NAME="Sing-box"
-if ! command -v sing-box &> /dev/null; then echo -e "${YELLOW}   首次部署需下载 Sing-box 核心，请耐心等待...${NC}"; bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1; fi
-hash -r; SB_BIN=$(command -v sing-box || echo "/usr/local/bin/sing-box"); KEYS=$("$SB_BIN" generate reality-keypair)
+if ! command -v sing-box &> /dev/null; then echo -e "${YELLOW}   首次部署需下载 Sing-box 核心，请耐心等待...${NC}"; bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1; hash -r; command -v sing-box &>/dev/null || { echo -e "\n${RED}[错误] Sing-box 核心下载失败，请检查网络连接。${NC}"; pause_for_enter; return; }; fi
+SB_BIN=$(command -v sing-box || echo "/usr/local/bin/sing-box"); KEYS=$("$SB_BIN" generate reality-keypair)
 PRI=$(echo "$KEYS" | awk -F'[: ]+' '/Private/{print $NF}'); PUB=$(echo "$KEYS" | awk -F'[: ]+' '/Public/{print $NF}')
 NEW_INBOUND='{"type":"vless","listen":"::","listen_port":'$PORT',"users":[{"uuid":"'$UUID'","flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":"'$SNI_DOMAIN'","reality":{"enabled":true,"handshake":{"server":"'$SNI_DOMAIN'","server_port":443},"private_key":"'$PRI'","short_id":["'$SHORT_ID'"]}}}'
 if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$PORT" "Sing-box"; then systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box); else SERVICE_STATUS="config_error"; fi
@@ -1059,12 +1083,12 @@ chmod 755 "$CERT_DIR"; chmod 644 "$CERT_DIR"/*.pem; chown -R nobody:nogroup "$CE
 UUID=$(cat /proc/sys/kernel/random/uuid); WSPATH="/$(openssl rand -hex 4)"
 if [ "$core_choice" == "1" ]; then
 CORE_NAME="Xray"
-if ! command -v xray &> /dev/null; then echo -e "${YELLOW}   首次部署需下载 Xray 核心，请耐心等待...${NC}"; bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1; fi
+if ! command -v xray &> /dev/null; then echo -e "${YELLOW}   首次部署需下载 Xray 核心，请耐心等待...${NC}"; bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1; hash -r; command -v xray &>/dev/null || { echo -e "\n${RED}[错误] Xray 核心下载失败，请检查网络连接。${NC}"; pause_for_enter; return; }; fi
 NEW_INBOUND='{"port":'$WS_PORT',"protocol":"vless","settings":{"clients":[{"id":"'$UUID'"}],"decryption":"none"},"streamSettings":{"network":"ws","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"'$CERT_DIR'/fullchain.pem","keyFile":"'$CERT_DIR'/privkey.pem"}]},"wsSettings":{"path":"'$WSPATH'"}}}'
 if append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$WS_PORT" "Xray"; then systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray); else SERVICE_STATUS="config_error"; fi
 else
 CORE_NAME="Sing-box"
-if ! command -v sing-box &> /dev/null; then echo -e "${YELLOW}   首次部署需下载 Sing-box 核心，请耐心等待...${NC}"; bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1; fi
+if ! command -v sing-box &> /dev/null; then echo -e "${YELLOW}   首次部署需下载 Sing-box 核心，请耐心等待...${NC}"; bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1; hash -r; command -v sing-box &>/dev/null || { echo -e "\n${RED}[错误] Sing-box 核心下载失败，请检查网络连接。${NC}"; pause_for_enter; return; }; fi
 NEW_INBOUND='{"type":"vless","listen":"::","listen_port":'$WS_PORT',"users":[{"uuid":"'$UUID'"}],"tls":{"enabled":true,"server_name":"'$DOMAIN'","certificate_path":"'$CERT_DIR'/fullchain.pem","key_path":"'$CERT_DIR'/privkey.pem"},"transport":{"type":"ws","path":"'$WSPATH'"}}'
 if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$WS_PORT" "Sing-box"; then systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box); else SERVICE_STATUS="config_error"; fi
 fi
@@ -1169,12 +1193,12 @@ chmod 755 "$CERT_DIR"; chmod 644 "$CERT_DIR"/*.pem; chown -R nobody:nogroup "$CE
 HY2_PASS=$(openssl rand -hex 8)
 if [ "$core_choice" == "1" ]; then
 CORE_NAME="Xray"
-if ! command -v xray &> /dev/null; then echo -e "${YELLOW}   首次部署需下载 Xray 核心，请耐心等待...${NC}"; bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1; fi
+if ! command -v xray &> /dev/null; then echo -e "${YELLOW}   首次部署需下载 Xray 核心，请耐心等待...${NC}"; bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1; hash -r; command -v xray &>/dev/null || { echo -e "\n${RED}[错误] Xray 核心下载失败，请检查网络连接。${NC}"; pause_for_enter; return; }; fi
 NEW_INBOUND='{"listen":"0.0.0.0","port":'$HY2_PORT',"protocol":"hysteria","settings":{"version":2,"clients":[{"auth":"'$HY2_PASS'","email":"user@vpsbox"}]},"streamSettings":{"network":"hysteria","security":"tls","tlsSettings":{"alpn":["h3"],"minVersion":"1.3","certificates":[{"certificateFile":"'$CERT_DIR'/fullchain.pem","keyFile":"'$CERT_DIR'/privkey.pem"}]},"hysteriaSettings":{"version":2,"auth":"'$HY2_PASS'","udpIdleTimeout":60}}}'
 if append_inbound "/usr/local/etc/xray/config.json" "$NEW_INBOUND" "$HY2_PORT" "Xray"; then systemctl restart xray && systemctl enable xray >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active xray); else SERVICE_STATUS="config_error"; fi
 else
 CORE_NAME="Sing-box"
-if ! command -v sing-box &> /dev/null; then echo -e "${YELLOW}   首次部署需下载 Sing-box 核心，请耐心等待...${NC}"; bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1; fi
+if ! command -v sing-box &> /dev/null; then echo -e "${YELLOW}   首次部署需下载 Sing-box 核心，请耐心等待...${NC}"; bash <(curl -fsSL https://sing-box.app/install.sh) > /dev/null 2>&1; hash -r; command -v sing-box &>/dev/null || { echo -e "\n${RED}[错误] Sing-box 核心下载失败，请检查网络连接。${NC}"; pause_for_enter; return; }; fi
 NEW_INBOUND='{"type":"hysteria2","listen":"::","listen_port":'$HY2_PORT',"users":[{"password":"'$HY2_PASS'"}],"tls":{"enabled":true,"server_name":"'$DOMAIN'","certificate_path":"'$CERT_DIR'/fullchain.pem","key_path":"'$CERT_DIR'/privkey.pem"}}'
 if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$HY2_PORT" "Sing-box"; then systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box); else SERVICE_STATUS="config_error"; fi
 fi
@@ -1194,6 +1218,7 @@ install_warp() {
 clear; print_divider
 print_center "[ Cloudflare WARP 一键解锁 ]" "$CYAN"
 if ! confirm_action "部署 Cloudflare WARP"; then pause_for_enter; return; fi
+install_dependencies
 echo -e "\n${CYAN}>>> 正在启动 WARP 脚本...${NC}\n${YELLOW}   脚本下载与安装可能需要 1-2 分钟，请耐心等待${NC}"
 wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh && bash menu.sh || echo -e "\n${RED}[错误] WARP 脚本下载或执行失败，请检查网络。${NC}"
 pause_for_enter
@@ -1207,6 +1232,7 @@ if ! command -v ufw &> /dev/null; then
 echo -e "${YELLOW}[系统] 正在自动安装 UFW 防火墙...${NC}"
 apt-get update -y > /dev/null 2>&1; apt-get install ufw -y > /dev/null 2>&1 || echo -e "${RED}[错误] UFW 安装失败。${NC}"
 fi
+install_dependencies
 echo -e "  ${GREEN}1.${NC} 查看当前防火墙状态与已放行端口\n  ${GREEN}2.${NC} 放行指定新端口 (TCP/UDP)\n  ${GREEN}3.${NC} 删除某个端口规则\n  ${GREEN}4.${NC} 开启防火墙\n  ${GREEN}5.${NC} 彻底关闭防火墙\n  ${GREEN}0.${NC} 返回主菜单"
 echo ""
 read -r -p "> 请选择操作 [0-5]: " ufw_opt
