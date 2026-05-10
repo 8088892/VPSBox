@@ -1,7 +1,7 @@
 #!/bin/bash
 # =====================================================================
 # 项目名称: VPS Box (轻量级节点管理与网络优化引擎)
-# 版本: v2.7.9 (修复: clear_screen回滚缓冲 + wget timestamping + $0 fallback + trap清理)
+# 版本: v2.8.0 (交互优化: Fail2Ban重新配置 + UFW清空警告 + Reality IPv6提示 + 清理缓冲)
 # =====================================================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -540,7 +540,25 @@ fail2ban-client status sshd 2>/dev/null | grep -E 'Status|Banned|Total' || echo 
 echo -e "\n  ${GREEN}1.${NC} 重新配置 SSH 防护\n  ${GREEN}2.${NC} 查看封禁列表\n  ${GREEN}0.${NC} 返回"
 read -r -p "> 请选择: " fb_opt
 case "${fb_opt// /}" in
-1) ;;
+1)
+    local FB_SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
+    [ -z "$FB_SSH_PORT" ] && FB_SSH_PORT=22
+    cat > /etc/fail2ban/jail.local << FBEOL
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 5
+
+[sshd]
+enabled = true
+port = ${FB_SSH_PORT}
+logpath = /var/log/auth.log
+maxretry = 3
+bantime = 86400
+FBEOL
+    systemctl restart fail2ban >/dev/null 2>&1
+    echo -e "\n${GREEN}[成功] SSH 防护已重新配置 (端口: ${FB_SSH_PORT})${NC}"
+    pause_for_enter; return ;;
 2) fail2ban-client status sshd 2>/dev/null && fail2ban-client get sshd banned 2>/dev/null; pause_for_enter; return ;;
 *) return ;;
 esac
@@ -1067,7 +1085,10 @@ install_dependencies
 UUID=$(cat /proc/sys/kernel/random/uuid); SHORT_ID=$(openssl rand -hex 8)
 LINK_IP="$SERVER_IP"
 # 优先用 IPv4，v4 未分配则用 v6
-if [ "$SERVER_IPV4" == "未分配" ] && [ "$SERVER_IPV6" != "未分配" ]; then LINK_IP="[${SERVER_IPV6}]"; fi
+if [ "$SERVER_IPV4" == "未分配" ] && [ "$SERVER_IPV6" != "未分配" ]; then 
+    echo -e "${YELLOW}[提示] IPv4 未分配，自动使用 IPv6: [${SERVER_IPV6}]${NC}"
+    LINK_IP="[${SERVER_IPV6}]"
+fi
 if [ "$core_choice" == "1" ]; then
 CORE_NAME="Xray"
 if ! command -v xray &> /dev/null; then echo -e "${YELLOW}   首次部署需下载 Xray 核心，请耐心等待...${NC}"; bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install > /dev/null 2>&1; hash -r; command -v xray &>/dev/null || { echo -e "\n${RED}[错误] Xray 核心下载失败，请检查网络连接。${NC}"; pause_for_enter; return; }; fi
@@ -1333,7 +1354,7 @@ if ! confirm_action "彻底关闭防火墙" "n"; then continue; fi
 ufw disable || { echo -e "${RED}[错误] 关闭防火墙失败。${NC}"; pause_for_enter; continue; }
 echo -e "${GREEN}[成功] 防火墙已完全关闭！${NC}"; pause_for_enter ;;
 6)
-if ! confirm_action "仅放行当前正在使用的端口 (其余全部关闭)"; then continue; fi
+if ! confirm_action "⚠️ 重置所有规则，仅放行正在使用的端口 (之前手动加的规则会丢失)"; then continue; fi
 # 获取当前 SSH 端口
 SSHPORT=$(ss -tlnp 2>/dev/null | grep -w sshd | awk '{print $4}' | awk -F: '{print $NF}' | head -1)
 [ -z "$SSHPORT" ] && SSHPORT=$(grep -E "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
@@ -1410,7 +1431,7 @@ done
 
 while true; do
 clear_screen; print_divider
-print_center "VPS Box 节点部署与服务器管家 v2.7.9" "$PURPLE"
+print_center "VPS Box 节点部署与服务器管家 v2.8.0" "$PURPLE"
 
 echo -e "  ${CYAN}【基础系统管理与安全防护】${NC}"
 echo -e "  ${GREEN} 1.${NC} 系统概览 (资源/流量)"
@@ -1442,7 +1463,7 @@ echo -e "  ${GREEN}23.${NC} UFW 防火墙简单端口管理"
 echo -e "  ${GREEN}24.${NC} 脚本管理 (更新/卸载)"
 echo -e "  ${GREEN} 0.${NC} 安全退出"
 print_divider
-echo -e "${YELLOW}当前版本: v2.7.9${NC}"
+echo -e "${YELLOW}当前版本: v2.8.0${NC}"
 echo ""
 read -r -p "> 请输入选择 [0-24]: " OPTION
 OPTION="${OPTION// /}"
