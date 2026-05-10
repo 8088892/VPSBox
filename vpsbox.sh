@@ -1,7 +1,7 @@
 #!/bin/bash
 # =====================================================================
 # 项目名称: VPS Box (轻量级节点管理与网络优化引擎)
-# 版本: v2.8.0 (交互优化: Fail2Ban重新配置 + UFW清空警告 + Reality IPv6提示 + 清理缓冲)
+# 版本: v2.8.1 (回退: clear_screen 恢复为最简单 clear)
 # =====================================================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -43,7 +43,7 @@ if ! grep -q "$(hostname)" /etc/hosts; then
 echo "127.0.1.1 $(hostname)" >> /etc/hosts
 fi
 
-clear_screen() { printf '\033[H\033[2J' 2>/dev/null || tput clear 2>/dev/null || command clear 2>/dev/null || printf '\n\n\n\n\n\n\n\n\n\n'; }
+clear_screen() { clear; }
 
 CPU_CORES=$(nproc)
 RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
