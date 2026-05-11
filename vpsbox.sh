@@ -865,7 +865,11 @@ clear_screen; print_divider
 print_center "[ IP 质量检测与流媒体解锁 ]" "$CYAN"
 install_dependencies
 echo -e "${CYAN}>>> 正在启动权威检测引擎...${NC}\n"
-bash <(curl -sL --connect-timeout 10 https://Check.Place) || echo -e "\n${RED}[错误] 网络不通或检测脚本无法下载，请检查服务器出墙连通性。${NC}"
+bash <(curl -sL --connect-timeout 10 https://Check.Place)
+local check_ret=$?
+if [ $check_ret -ne 0 ] && [ $check_ret -ne 1 ]; then
+    echo -e "\n${RED}[错误] 网络不通或检测脚本无法下载，请检查服务器出墙连通性。${NC}"
+fi
 pause_for_enter
 }
 
@@ -1431,7 +1435,7 @@ done
 
 while true; do
 clear_screen; print_divider
-print_center "VPS Box 节点部署与服务器管家 v2.8.0" "$PURPLE"
+print_center "VPS Box 节点部署与服务器管家 v2.8.1" "$PURPLE"
 
 echo -e "  ${CYAN}【基础系统管理与安全防护】${NC}"
 echo -e "  ${GREEN} 1.${NC} 系统概览 (资源/流量)"
@@ -1463,7 +1467,7 @@ echo -e "  ${GREEN}23.${NC} UFW 防火墙简单端口管理"
 echo -e "  ${GREEN}24.${NC} 脚本管理 (更新/卸载)"
 echo -e "  ${GREEN} 0.${NC} 安全退出"
 print_divider
-echo -e "${YELLOW}当前版本: v2.8.0${NC}"
+echo -e "${YELLOW}当前版本: v2.8.1${NC}"
 echo ""
 read -r -p "> 请输入选择 [0-24]: " OPTION
 OPTION="${OPTION// /}"
