@@ -1281,8 +1281,10 @@ read -r -p "> 请输入您的 Cloudflare Account ID: " CF_Account_ID
 if [ -z "$CF_Account_ID" ]; then continue; fi
 export CF_Token="$CF_Token"; export CF_Account_ID="$CF_Account_ID"; break
 elif [ "$cert_mode" == "2" ]; then
-if [ -n "$DOMAIN_IP" ] && [ "$DOMAIN_IP" != "$SERVER_IP" ]; then 
-echo -e "\n${YELLOW}[警告] 域名解析 IP ($DOMAIN_IP) 与本机 IP ($SERVER_IP) 不符！${NC}"
+if [ -n "$DOMAIN_IP" ] && [ "$DOMAIN_IP" != "$SERVER_IP" ] && [ "$DOMAIN_IP" != "$SERVER_IPV6" ]; then 
+echo -e "\n${YELLOW}[警告] 域名解析 IP ($DOMAIN_IP) 与本机 IP 不符！${NC}"
+echo -e "${YELLOW}  ⚠️  可能开启了 Cloudflare 小黄云，Hysteria2 无法通过 CDN 代理！${NC}"
+echo -e "${YELLOW}  请去 CF 控制台关闭该域名的代理（改为灰色云朵），或者换用 API 模式申请证书。${NC}"
 read -r -p "> 是否强行继续？(y/n, 默认 n): " force_continue
 if [[ ! "${force_continue// /}" =~ ^[yY]$ ]]; then continue; fi
 fi
