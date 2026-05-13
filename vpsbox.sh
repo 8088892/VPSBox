@@ -1,7 +1,7 @@
 #!/bin/bash
 # =====================================================================
 # 项目名称: VPS Box (轻量级节点管理与网络优化引擎)
-# 版本: v2.8.2 (修复: BBRv3 XanMod 源适配 Debian Trixie)
+# 版本: v2.8.3 (修复: 首次注册改用 cp 复制而非软链接)
 # =====================================================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -22,11 +22,10 @@ exit 1
 fi
 # 退出时清理临时测试配置文件
 trap 'rm -f /tmp/vpsbox_test_config.json' EXIT
-# 自动注册全局命令 (首次运行时创建软链接)
+# 自动注册全局命令 (首次运行时复制到系统路径)
 if [ "$0" != "$SHORTCUT_PATH" ] && [ ! -f "$SHORTCUT_PATH" ]; then
     chmod +x "$0"
-    SCRIPT_REAL=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$(cd "$(dirname "$0")" && pwd)/$(basename "$0")")
-    ln -sf "$SCRIPT_REAL" "$SHORTCUT_PATH" 2>/dev/null && \
+    cp "$0" "$SHORTCUT_PATH" 2>/dev/null && \
     echo -e "${GREEN}[提示] 已自动注册全局命令: vpsbox${NC}"
 fi
 if [ -f /etc/os-release ]; then
@@ -1453,7 +1452,7 @@ done
 
 while true; do
 clear_screen; print_divider
-print_center "VPS Box 节点部署与服务器管家 v2.8.2" "$PURPLE"
+print_center "VPS Box 节点部署与服务器管家 v2.8.3 (修复: 首次注册改用 cp 复制而非软链接)
 
 echo -e "  ${CYAN}【基础系统管理与安全防护】${NC}"
 echo -e "  ${GREEN} 1.${NC} 系统概览 (资源/流量)"
@@ -1485,7 +1484,7 @@ echo -e "  ${GREEN}23.${NC} UFW 防火墙简单端口管理"
 echo -e "  ${GREEN}24.${NC} 脚本管理 (更新/卸载)"
 echo -e "  ${GREEN} 0.${NC} 安全退出"
 print_divider
-echo -e "${YELLOW}当前版本: v2.8.2${NC}"
+echo -e "${YELLOW}当前版本: v2.8.3 (修复: 首次注册改用 cp 复制而非软链接)
 echo ""
 read -r -p "> 请输入选择 [0-24]: " OPTION
 OPTION="${OPTION// /}"
