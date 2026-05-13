@@ -1,7 +1,7 @@
 #!/bin/bash
 # =====================================================================
 # 项目名称: VPS Box (轻量级节点管理与网络优化引擎)
-# 版本: v2.8.1 (回退: clear_screen 恢复为最简单 clear)
+# 版本: v2.8.2 (修复: BBRv3 XanMod 源适配 Debian Trixie)
 # =====================================================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -378,11 +378,10 @@ else
 fi
 if ! confirm_action "安装 BBRv3 内核"; then continue; fi
 install_dependencies
-echo -e "\n${CYAN}>>> 正在连接 Ubuntu 官方服务器获取 XanMod 密钥 (防拦截模式)...${NC}"
-gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 86F7D09EE734E623 > /dev/null 2>&1
-gpg --export 86F7D09EE734E623 > /usr/share/keyrings/xanmod-archive-keyring.gpg
-if [ ! -s /usr/share/keyrings/xanmod-archive-keyring.gpg ]; then echo -e "\n${RED}[错误] 密钥获取失败！请检查网络或稍后重试。${NC}"; rm -f /usr/share/keyrings/xanmod-archive-keyring.gpg; sleep 3; continue; fi
-echo 'deb [signed-by=/usr/share/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' > /etc/apt/sources.list.d/xanmod-release.list
+echo -e "\n${CYAN}>>> 正在获取 XanMod 官方 GPG 密钥...${NC}"
+wget -qO - https://dl.xanmod.org/archive.key 2>/dev/null | gpg --dearmor -o /etc/apt/keyrings/xanmod-archive-keyring.gpg 2>/dev/null
+if [ ! -s /etc/apt/keyrings/xanmod-archive-keyring.gpg ]; then echo -e "\n${RED}[错误] 密钥获取失败！请检查网络或稍后重试。${NC}"; rm -f /etc/apt/keyrings/xanmod-archive-keyring.gpg; sleep 3; continue; fi
+echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org $(lsb_release -sc) main" > /etc/apt/sources.list.d/xanmod-release.list
 echo -e "\n${CYAN}>>> 正在更新软件源...${NC}"
 apt update -y || { echo -e "\n${RED}[错误] 源更新失败。${NC}"; sleep 2; continue; }
 echo -e "\n${CYAN}>>> 正在安装 XanMod BBRv3 内核 (${XANMOD_FLAVOR} 版)...${NC}\n${YELLOW}   内核编译安装较慢，请耐心等待约 2-5 分钟${NC}"
@@ -407,7 +406,7 @@ if grep -qi ubuntu /etc/os-release; then apt install -y linux-image-generic; els
 fi
 echo -e "\n${CYAN}>>> 正在清理内核文件...${NC}"
 apt purge -y "^linux-image.*xanmod.*" "^linux-headers.*xanmod.*" || { echo -e "${RED}[错误] 清理旧内核失败。${NC}"; sleep 2; continue; }
-rm -f /etc/apt/sources.list.d/xanmod-release.list /usr/share/keyrings/xanmod-archive-keyring.gpg
+rm -f /etc/apt/sources.list.d/xanmod-release.list /etc/apt/keyrings/xanmod-archive-keyring.gpg
 apt update -y > /dev/null 2>&1; update-grub
 echo -e "\n${GREEN}[成功] 卸载成功！即将重启服务器回退至系统原生内核...${NC}"
 sleep 3; reboot ;;
@@ -1454,7 +1453,7 @@ done
 
 while true; do
 clear_screen; print_divider
-print_center "VPS Box 节点部署与服务器管家 v2.8.1" "$PURPLE"
+print_center "VPS Box 节点部署与服务器管家 v2.8.2" "$PURPLE"
 
 echo -e "  ${CYAN}【基础系统管理与安全防护】${NC}"
 echo -e "  ${GREEN} 1.${NC} 系统概览 (资源/流量)"
@@ -1486,7 +1485,7 @@ echo -e "  ${GREEN}23.${NC} UFW 防火墙简单端口管理"
 echo -e "  ${GREEN}24.${NC} 脚本管理 (更新/卸载)"
 echo -e "  ${GREEN} 0.${NC} 安全退出"
 print_divider
-echo -e "${YELLOW}当前版本: v2.8.1${NC}"
+echo -e "${YELLOW}当前版本: v2.8.2${NC}"
 echo ""
 read -r -p "> 请输入选择 [0-24]: " OPTION
 OPTION="${OPTION// /}"
