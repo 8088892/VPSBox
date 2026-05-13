@@ -1,7 +1,7 @@
 #!/bin/bash
 # =====================================================================
 # 项目名称: VPS Box (轻量级节点管理与网络优化引擎)
-# 版本: v2.8.3 (修复: 首次注册改用 cp 复制而非软链接)
+# 版本: v2.8.4 (修复: 管道模式下重新下载脚本实现全局注册)
 # =====================================================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -12,6 +12,7 @@ NC='\033[0m'
 BACKUP_DIR="/etc/vpsbox_backups"
 CUSTOM_CONF="/etc/sysctl.d/99-vpsbox-tcp.conf"
 SHORTCUT_PATH="/usr/local/bin/vpsbox"
+SCRIPT_URL="https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh"
 NODE_RECORD_FILE="/etc/vpsbox_nodes.txt"
 INSTALL_LOG="/tmp/vpsbox_install.log"
 
@@ -22,11 +23,18 @@ exit 1
 fi
 # 退出时清理临时测试配置文件
 trap 'rm -f /tmp/vpsbox_test_config.json' EXIT
-# 自动注册全局命令 (首次运行时复制到系统路径)
-if [ "$0" != "$SHORTCUT_PATH" ] && [ ! -f "$SHORTCUT_PATH" ]; then
-    chmod +x "$0"
-    cp "$0" "$SHORTCUT_PATH" 2>/dev/null && \
-    echo -e "${GREEN}[提示] 已自动注册全局命令: vpsbox${NC}"
+# 自动注册全局命令 (首次运行时复制到系统路径；管道模式自动重新下载)
+if [ "$0" != "$SHORTCUT_PATH" ] && [ ! -s "$SHORTCUT_PATH" ]; then
+    if [ -f "$0" ] && cp "$0" "$SHORTCUT_PATH" 2>/dev/null; then
+        chmod +x "$SHORTCUT_PATH"
+        echo -e "${GREEN}[提示] 已自动注册全局命令: vpsbox${NC}"
+    elif command -v curl &>/dev/null && curl -fsSL "$SCRIPT_URL" -o "$SHORTCUT_PATH" 2>/dev/null; then
+        chmod +x "$SHORTCUT_PATH"
+        echo -e "${GREEN}[提示] 已自动注册全局命令: vpsbox${NC}"
+    elif command -v wget &>/dev/null && wget -qO "$SHORTCUT_PATH" "$SCRIPT_URL" 2>/dev/null; then
+        chmod +x "$SHORTCUT_PATH"
+        echo -e "${GREEN}[提示] 已自动注册全局命令: vpsbox${NC}"
+    fi
 fi
 if [ -f /etc/os-release ]; then
 . /etc/os-release
@@ -1452,7 +1460,7 @@ done
 
 while true; do
 clear_screen; print_divider
-print_center "VPS Box 节点部署与服务器管家 v2.8.3" "$PURPLE"
+print_center "VPS Box 节点部署与服务器管家 v2.8.4" "$PURPLE"
 
 echo -e "  ${CYAN}【基础系统管理与安全防护】${NC}"
 echo -e "  ${GREEN} 1.${NC} 系统概览 (资源/流量)"
@@ -1484,7 +1492,7 @@ echo -e "  ${GREEN}23.${NC} UFW 防火墙简单端口管理"
 echo -e "  ${GREEN}24.${NC} 脚本管理 (更新/卸载)"
 echo -e "  ${GREEN} 0.${NC} 安全退出"
 print_divider
-echo -e "${YELLOW}当前版本: v2.8.3${NC}"
+echo -e "${YELLOW}当前版本: v2.8.4${NC}"
 echo ""
 read -r -p "> 请输入选择 [0-24]: " OPTION
 OPTION="${OPTION// /}"
