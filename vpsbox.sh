@@ -1,7 +1,7 @@
 #!/bin/bash
 # =====================================================================
 # 项目名称: VPS Box (轻量级节点管理与网络优化引擎)
-# 版本: v2.8.4 (修复: 管道模式下重新下载脚本实现全局注册)
+# 版本: v2.8.5 (删除升级备份 + 主菜单版本检测)
 # =====================================================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -1439,9 +1439,8 @@ if ! confirm_action "从 GitHub 拉取最新版覆盖当前脚本"; then continu
 echo -e "\n${CYAN}>>> 正在下载...${NC}"
 curl -sL "https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh" -o /tmp/vpsbox_update.sh
 if [ -f /tmp/vpsbox_update.sh ] && grep -q "VPSBox" /tmp/vpsbox_update.sh; then
-cp "$SHORTCUT_PATH" /tmp/vpsbox_backup.sh 2>/dev/null
 mv /tmp/vpsbox_update.sh "$SHORTCUT_PATH"; chmod +x "$SHORTCUT_PATH"
-echo -e "\n${GREEN}[成功] 已更新！旧版备份在 /tmp/vpsbox_backup.sh${NC}"
+echo -e "\n${GREEN}[成功] 已更新！${NC}"
 echo -e "${YELLOW}即将重启脚本...${NC}"; sleep 2; exec "$SHORTCUT_PATH"
 else
 echo -e "\n${RED}[错误] 下载失败或文件异常。${NC}"; rm -f /tmp/vpsbox_update.sh
@@ -1458,9 +1457,10 @@ esac
 done
 }
 
+_VER_CHECKED=0
 while true; do
 clear_screen; print_divider
-print_center "VPS Box 节点部署与服务器管家 v2.8.4" "$PURPLE"
+print_center "VPS Box 节点部署与服务器管家 v2.8.5" "$PURPLE"
 
 echo -e "  ${CYAN}【基础系统管理与安全防护】${NC}"
 echo -e "  ${GREEN} 1.${NC} 系统概览 (资源/流量)"
@@ -1492,7 +1492,14 @@ echo -e "  ${GREEN}23.${NC} UFW 防火墙简单端口管理"
 echo -e "  ${GREEN}24.${NC} 脚本管理 (更新/卸载)"
 echo -e "  ${GREEN} 0.${NC} 安全退出"
 print_divider
-echo -e "${YELLOW}当前版本: v2.8.4${NC}"
+echo -e "${YELLOW}当前版本: v2.8.5${NC}"
+if [ "$_VER_CHECKED" -eq 0 ]; then
+    _VER_CHECKED=1
+    _rmt=$(curl -sL --max-time 3 "https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh" 2>/dev/null | grep -oE 'v[0-9.]+' | head -1)
+    if [ -n "$_rmt" ] && [ "$_rmt" != "v2.8.5" ]; then
+        echo -e "${GREEN}[新版本可用] ${_rmt} → 请选择 24 更新${NC}"
+    fi
+fi
 echo ""
 read -r -p "> 请输入选择 [0-24]: " OPTION
 OPTION="${OPTION// /}"
