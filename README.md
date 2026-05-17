@@ -3,7 +3,7 @@
 一键搞定 VPS 系统优化、BBR 调优、代理节点部署、防火墙管理。
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh)
+bash <(curl -sL https://raw.githubusercontent.com/vmenzo/VPSBox/main/vpsbox.sh)
 ```
 
 ---
