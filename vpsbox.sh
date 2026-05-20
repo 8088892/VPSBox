@@ -919,10 +919,8 @@ if [ "$vn_opt" == "0" ]; then break; fi
 if [[ "$vn_opt" =~ ^[0-9]+$ ]] && [ "$vn_opt" -ge 1 ] && [ "$vn_opt" -le "${#links[@]}" ]; then
 local target_link=$(echo "${links[$((vn_opt-1))]}" | awk -F' \\| ' '{print $3}')
 echo -e "\n${CYAN}>>> 节点分享链接：${NC}\n${target_link}\n"
-echo -e "${YELLOW}>>> 节点二维码 (手机扫码用)：${NC}"
-qrencode -t ANSI256 -m 2 "$target_link" 2>/dev/null || qrencode -t UTF8 -m 2 "$target_link"
-QR_PNG="/tmp/vpsbox_qr_$(date +%s).png"
-qrencode -o "$QR_PNG" -s 3 -m 1 "$target_link" 2>/dev/null && echo -e "\n${GREEN}>>> 高清方形二维码已保存: ${QR_PNG}${NC}"
+echo -e "${YELLOW}>>> 节点二维码 (手机扫码)：${NC}"
+qrencode -t UTF8 -m 1 "$target_link"
 pause_for_enter
 elif [[ "$vn_opt" =~ ^[bB]$ ]]; then
 if ! confirm_action "备份当前节点配置"; then continue; fi
@@ -1066,9 +1064,7 @@ output_node_result() {
         echo -e "\n${GREEN}[提示] ${LABEL} 节点成功部署于 ${CORE_NAME}！${NC}"
         echo -e "${CYAN}${LINK}${NC}\n"
         echo -e "${YELLOW}>>> 扫描下方二维码快速导入节点：${NC}"
-        qrencode -t ANSI256 -m 1 "$LINK" 2>/dev/null || qrencode -t UTF8 -m 1 "$LINK"
-        QR_PNG="/tmp/vpsbox_qr_$(date +%s).png"
-        qrencode -o "$QR_PNG" -s 3 -m 1 "$LINK" 2>/dev/null && echo -e "\n${GREEN}>>> 高清方形二维码已保存: ${QR_PNG}${NC}"
+        qrencode -t UTF8 -m 1 "$LINK"
         echo "${CORE_NAME}-${LABEL} | 端口:${PORT} | ${LINK}" >> "$NODE_RECORD_FILE"
     else
         echo -e "\n${RED}[错误] 配置校验失败或服务拒绝启动，未保存任何变更！${NC}"
