@@ -12,7 +12,7 @@ NC='\033[0m'
 BACKUP_DIR="/etc/vpsbox_backups"
 CUSTOM_CONF="/etc/sysctl.d/99-vpsbox-tcp.conf"
 SHORTCUT_PATH="/usr/local/bin/vpsbox"
-SCRIPT_URL="https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh"
+SCRIPT_URL="https://raw.githubusercontent.com/vmenzo/VPSBox/main/vpsbox.sh"
 NODE_RECORD_FILE="/etc/vpsbox_nodes.txt"
 INSTALL_LOG="/tmp/vpsbox_install.log"
 
@@ -1427,7 +1427,7 @@ print_center "[ VPSBox 脚本管理 ]" "$CYAN"
 local local_ver=$(grep -oE 'v[0-9.]+' "$0" 2>/dev/null | head -1)
 [ -z "$local_ver" ] && local_ver=$(grep -oE 'v[0-9.]+' "$SHORTCUT_PATH" 2>/dev/null | head -1)
 [ -z "$local_ver" ] && local_ver="未知"
-local remote_ver=$(curl -sL --max-time 3 https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh 2>/dev/null | grep -oE 'v[0-9.]+' | head -1)
+local remote_ver=$(curl -sL --max-time 3 https://raw.githubusercontent.com/vmenzo/VPSBox/main/vpsbox.sh 2>/dev/null | grep -oE 'v[0-9.]+' | head -1)
 echo -e "  ${CYAN}本地版本:${NC} ${GREEN}${local_ver}${NC}"
 [ -n "$remote_ver" ] && echo -e "  ${CYAN}最新版本:${NC} ${GREEN}${remote_ver}${NC}" || echo -e "  ${YELLOW}无法获取远程版本${NC}"
 
@@ -1440,7 +1440,7 @@ case $ms_opt in
 1)
 if ! confirm_action "从 GitHub 拉取最新版覆盖当前脚本"; then continue; fi
 echo -e "\n${CYAN}>>> 正在下载...${NC}"
-curl -sL "https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh" -o /tmp/vpsbox_update.sh
+curl -sL "https://raw.githubusercontent.com/vmenzo/VPSBox/main/vpsbox.sh" -o /tmp/vpsbox_update.sh
 if [ -f /tmp/vpsbox_update.sh ] && grep -q "VPSBox" /tmp/vpsbox_update.sh; then
 mv /tmp/vpsbox_update.sh "$SHORTCUT_PATH"; chmod +x "$SHORTCUT_PATH"
 echo -e "\n${GREEN}[成功] 已更新！${NC}"
@@ -1498,7 +1498,7 @@ print_divider
 echo -e "${YELLOW}当前版本: v2.8.7${NC}"
 if [ "$_VER_CHECKED" -eq 0 ]; then
     _VER_CHECKED=1
-    _rmt=$(curl -sL --max-time 3 "https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh" 2>/dev/null | grep -oE 'v[0-9.]+' | head -1)
+    _rmt=$(curl -sL --max-time 3 "https://raw.githubusercontent.com/vmenzo/VPSBox/main/vpsbox.sh" 2>/dev/null | grep -oE 'v[0-9.]+' | head -1)
     if [ -n "$_rmt" ] && [ "$_rmt" != "v2.8.7" ]; then
         echo -e "${GREEN}[新版本可用] ${_rmt} → 请选择 24 更新${NC}"
     fi
