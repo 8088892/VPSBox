@@ -921,8 +921,6 @@ local target_link=$(echo "${links[$((vn_opt-1))]}" | awk -F' \\| ' '{print $3}')
 echo -e "\n${CYAN}>>> 节点分享链接：${NC}\n${target_link}\n"
 echo -e "${YELLOW}>>> 节点二维码 (手机扫码)：${NC}"
 qrencode -t ANSI256 -m 1 "$target_link" 2>/dev/null || qrencode -t UTF8 -m 1 "$target_link"
-QR_PNG="/tmp/vpsbox_qr.png"
-qrencode -o "$QR_PNG" -s 12 -m 2 "$target_link" 2>/dev/null && echo -e "\n${GREEN}>>> 方形二维码已保存: ${QR_PNG}${NC}"
 pause_for_enter
 elif [[ "$vn_opt" =~ ^[bB]$ ]]; then
 if ! confirm_action "备份当前节点配置"; then continue; fi
@@ -1067,8 +1065,6 @@ output_node_result() {
         echo -e "${CYAN}${LINK}${NC}\n"
         echo -e "${YELLOW}>>> 扫描下方二维码快速导入节点：${NC}"
         qrencode -t ANSI256 -m 1 "$LINK" 2>/dev/null || qrencode -t UTF8 -m 1 "$LINK"
-        QR_PNG="/tmp/vpsbox_qr.png"
-        qrencode -o "$QR_PNG" -s 12 -m 2 "$LINK" 2>/dev/null && echo -e "\n${GREEN}>>> 方形二维码已保存: ${QR_PNG}${NC}"
         echo "${CORE_NAME}-${LABEL} | 端口:${PORT} | ${LINK}" >> "$NODE_RECORD_FILE"
     else
         echo -e "\n${RED}[错误] 配置校验失败或服务拒绝启动，未保存任何变更！${NC}"
@@ -1118,7 +1114,7 @@ PRI=$(echo "$KEYS" | awk -F'[: ]+' '/Private/{print $NF}'); PUB=$(echo "$KEYS" |
 NEW_INBOUND='{"type":"vless","listen":"::","listen_port":'$PORT',"users":[{"uuid":"'$UUID'","flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":"'$SNI_DOMAIN'","reality":{"enabled":true,"handshake":{"server":"'$SNI_DOMAIN'","server_port":443},"private_key":"'$PRI'","short_id":["'$SHORT_ID'"]}}}'
 if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$PORT" "Sing-box"; then systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box); else SERVICE_STATUS="config_error"; fi
 fi
-LINK="vless://${UUID}@${LINK_IP}:${PORT}?encryption=none&security=reality&sni=${SNI_DOMAIN}&fp=chrome&pbk=${PUB}&sid=${SHORT_ID}&flow=xtls-rprx-vision#${CORE_NAME}-Reality"
+LINK="vless://${UUID}@${LINK_IP}:${PORT}?encryption=none&security=reality&sni=${SNI_DOMAIN}&fp=chrome&pbk=${PUB}&sid=${SHORT_ID}&flow=xtls-rprx-vision#R"
 output_node_result "$LINK" "Reality" "$PORT" "$CORE_NAME"
 pause_for_enter
 }
@@ -1235,7 +1231,7 @@ if ! command -v sing-box &> /dev/null; then echo -e "${YELLOW}   首次部署需
 NEW_INBOUND='{"type":"vless","listen":"::","listen_port":'$WS_PORT',"users":[{"uuid":"'$UUID'"}],"tls":{"enabled":true,"server_name":"'$DOMAIN'","certificate_path":"'$CERT_DIR'/fullchain.pem","key_path":"'$CERT_DIR'/privkey.pem"},"transport":{"type":"ws","path":"'$WSPATH'"}}'
 if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$WS_PORT" "Sing-box"; then systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box); else SERVICE_STATUS="config_error"; fi
 fi
-LINK="vless://${UUID}@${DOMAIN}:${WS_PORT}?encryption=none&security=tls&sni=${DOMAIN}&alpn=h2,http/1.1&type=ws&host=${DOMAIN}&path=${WSPATH}#${CORE_NAME}-WS-TLS"
+LINK="vless://${UUID}@${DOMAIN}:${WS_PORT}?encryption=none&security=tls&sni=${DOMAIN}&alpn=h2,http/1.1&type=ws&host=${DOMAIN}&path=${WSPATH}#WS"
 output_node_result "$LINK" "WS-TLS" "$WS_PORT" "$CORE_NAME"
 echo ""
 echo -e "${YELLOW}>>> 小白提示：必须开启 Cloudflare 小黄云（CDN 代理）${NC}"
@@ -1315,7 +1311,7 @@ if ! command -v sing-box &> /dev/null; then echo -e "${YELLOW}   首次部署需
 NEW_INBOUND='{"type":"hysteria2","listen":"::","listen_port":'$HY2_PORT',"users":[{"password":"'$HY2_PASS'"}],"tls":{"enabled":true,"server_name":"'$DOMAIN'","certificate_path":"'$CERT_DIR'/fullchain.pem","key_path":"'$CERT_DIR'/privkey.pem"}}'
 if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$HY2_PORT" "Sing-box"; then systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box); else SERVICE_STATUS="config_error"; fi
 fi
-LINK="hysteria2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}/?sni=${DOMAIN}&insecure=0#${CORE_NAME}-Hys2"
+LINK="hysteria2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}/?sni=${DOMAIN}&insecure=0#H2"
 output_node_result "$LINK" "Hys2" "$HY2_PORT" "$CORE_NAME"
 echo ""
 echo -e "${YELLOW}>>> 小白提示：不要开启 Cloudflare 小黄云！${NC}"
