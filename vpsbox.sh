@@ -1,7 +1,7 @@
 #!/bin/bash
 # =====================================================================
 # 项目名称: VPS Box (轻量级节点管理与网络优化引擎)
-# 版本: v2.8.6 (一键全开端口先清空规则再改默认策略)
+# 版本: v2.8.7 (分享链接兼容 v2rayN 导入)
 # =====================================================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -1114,7 +1114,7 @@ PRI=$(echo "$KEYS" | awk -F'[: ]+' '/Private/{print $NF}'); PUB=$(echo "$KEYS" |
 NEW_INBOUND='{"type":"vless","listen":"::","listen_port":'$PORT',"users":[{"uuid":"'$UUID'","flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":"'$SNI_DOMAIN'","reality":{"enabled":true,"handshake":{"server":"'$SNI_DOMAIN'","server_port":443},"private_key":"'$PRI'","short_id":["'$SHORT_ID'"]}}}'
 if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$PORT" "Sing-box"; then systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box); else SERVICE_STATUS="config_error"; fi
 fi
-LINK="vless://${UUID}@${LINK_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI_DOMAIN}&fp=chrome&pbk=${PUB}&sid=${SHORT_ID}&type=tcp#${CORE_NAME}-Reality"
+LINK="vless://${UUID}@${LINK_IP}:${PORT}?encryption=none&security=reality&sni=${SNI_DOMAIN}&fp=chrome&pbk=${PUB}&sid=${SHORT_ID}&flow=xtls-rprx-vision#${CORE_NAME}-Reality"
 output_node_result "$LINK" "Reality" "$PORT" "$CORE_NAME"
 pause_for_enter
 }
@@ -1231,7 +1231,7 @@ if ! command -v sing-box &> /dev/null; then echo -e "${YELLOW}   首次部署需
 NEW_INBOUND='{"type":"vless","listen":"::","listen_port":'$WS_PORT',"users":[{"uuid":"'$UUID'"}],"tls":{"enabled":true,"server_name":"'$DOMAIN'","certificate_path":"'$CERT_DIR'/fullchain.pem","key_path":"'$CERT_DIR'/privkey.pem"},"transport":{"type":"ws","path":"'$WSPATH'"}}'
 if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$WS_PORT" "Sing-box"; then systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box); else SERVICE_STATUS="config_error"; fi
 fi
-LINK="vless://${UUID}@${DOMAIN}:${WS_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${WSPATH}#${CORE_NAME}-WS-TLS"
+LINK="vless://${UUID}@${DOMAIN}:${WS_PORT}?encryption=none&security=tls&sni=${DOMAIN}&alpn=h2,http/1.1&type=ws&host=${DOMAIN}&path=${WSPATH}#${CORE_NAME}-WS-TLS"
 output_node_result "$LINK" "WS-TLS" "$WS_PORT" "$CORE_NAME"
 echo ""
 echo -e "${YELLOW}>>> 小白提示：必须开启 Cloudflare 小黄云（CDN 代理）${NC}"
@@ -1311,7 +1311,7 @@ if ! command -v sing-box &> /dev/null; then echo -e "${YELLOW}   首次部署需
 NEW_INBOUND='{"type":"hysteria2","listen":"::","listen_port":'$HY2_PORT',"users":[{"password":"'$HY2_PASS'"}],"tls":{"enabled":true,"server_name":"'$DOMAIN'","certificate_path":"'$CERT_DIR'/fullchain.pem","key_path":"'$CERT_DIR'/privkey.pem"}}'
 if append_inbound "/etc/sing-box/config.json" "$NEW_INBOUND" "$HY2_PORT" "Sing-box"; then systemctl restart sing-box && systemctl enable sing-box >/dev/null 2>&1; SERVICE_STATUS=$(systemctl is-active sing-box); else SERVICE_STATUS="config_error"; fi
 fi
-LINK="hy2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}?sni=${DOMAIN}&insecure=0#${CORE_NAME}-Hys2"
+LINK="hysteria2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}/?sni=${DOMAIN}&insecure=0#${CORE_NAME}-Hys2"
 output_node_result "$LINK" "Hys2" "$HY2_PORT" "$CORE_NAME"
 echo ""
 echo -e "${YELLOW}>>> 小白提示：不要开启 Cloudflare 小黄云！${NC}"
@@ -1463,7 +1463,7 @@ done
 _VER_CHECKED=0
 while true; do
 clear_screen; print_divider
-print_center "VPS Box 节点部署与服务器管家 v2.8.6" "$PURPLE"
+print_center "VPS Box 节点部署与服务器管家 v2.8.7" "$PURPLE"
 
 echo -e "  ${CYAN}【基础系统管理与安全防护】${NC}"
 echo -e "  ${GREEN} 1.${NC} 系统概览 (资源/流量)"
@@ -1495,11 +1495,11 @@ echo -e "  ${GREEN}23.${NC} UFW 防火墙简单端口管理"
 echo -e "  ${GREEN}24.${NC} 脚本管理 (更新/卸载)"
 echo -e "  ${GREEN} 0.${NC} 安全退出"
 print_divider
-echo -e "${YELLOW}当前版本: v2.8.6${NC}"
+echo -e "${YELLOW}当前版本: v2.8.7${NC}"
 if [ "$_VER_CHECKED" -eq 0 ]; then
     _VER_CHECKED=1
     _rmt=$(curl -sL --max-time 3 "https://raw.githubusercontent.com/8088892/VPSBox/main/vpsbox.sh" 2>/dev/null | grep -oE 'v[0-9.]+' | head -1)
-    if [ -n "$_rmt" ] && [ "$_rmt" != "v2.8.6" ]; then
+    if [ -n "$_rmt" ] && [ "$_rmt" != "v2.8.7" ]; then
         echo -e "${GREEN}[新版本可用] ${_rmt} → 请选择 24 更新${NC}"
     fi
 fi
